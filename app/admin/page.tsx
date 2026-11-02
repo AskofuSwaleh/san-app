@@ -3,6 +3,8 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 type ReportRow = {
   id: string;
@@ -20,13 +22,12 @@ export default function AdminDashboard() {
   const router = useRouter();
   const supabase = createClient();
 
-    const [date, setDate] = useState('');
+  const [date, setDate] = useState('');
   const [data, setData] = useState<ReportRow[]>([]);
   const [loading, setLoading] = useState(true);
 
   async function fetchReport() {
     setLoading(true);
-    // Get passes for the selected date (from midnight to midnight)
     const start = new Date(date);
     start.setHours(0, 0, 0, 0);
     const end = new Date(date);
@@ -50,14 +51,11 @@ export default function AdminDashboard() {
     setLoading(false);
   }
 
-   useEffect(() => {
-    // 1. Set today's date when the page first loads
+  useEffect(() => {
     if (!date) {
       setDate(new Date().toISOString().split('T')[0]);
-      return; // Stop here, the effect will re-run now that date is set
+      return;
     }
-    
-    // 2. Fetch the report whenever the date changes
     fetchReport();
   }, [date]);
 
@@ -74,7 +72,6 @@ export default function AdminDashboard() {
 
   const downloadCSV = () => {
     const headers = ['Admission No', 'Learner', 'Class', 'Reason', 'Status', 'Sent At', 'Acknowledged At', 'Closed At', 'Teacher', 'Nurse'];
-    
     const rows = data.map((p) => [
       p.learners?.admission_no || '',
       p.learners?.full_name || '',
@@ -87,12 +84,10 @@ export default function AdminDashboard() {
       p.teacher?.full_name || '',
       p.nurse?.full_name || '',
     ]);
-
     const csvContent = [
       headers.join(','),
       ...rows.map((row) => row.map((cell) => `"${cell}"`).join(','))
     ].join('\n');
-
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -101,6 +96,38 @@ export default function AdminDashboard() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  };
+
+  const downloadPDF = () => {
+    const doc = new jsPDF();
+    
+    doc.setFontSize(18);
+    doc.text('Kenya High School', 14, 22);
+    doc.setFontSize(12);
+    doc.text(`Sanatorium Daily Report - ${date}`, 14, 30);
+    
+    const tableColumn = ["Learner", "Class", "Reason", "Status", "Sent", "Ack", "Closed", "Teacher", "Nurse"];
+    const tableRows = data.map(p => [
+      `${p.learners?.full_name}\n(${p.learners?.admission_no})`,
+      p.learners?.class_stream || '',
+      p.reason_category,
+      p.status,
+      formatTime(p.sent_at),
+      formatTime(p.acknowledged_at),
+      formatTime(p.closed_at),
+      p.teacher?.full_name || '',
+      p.nurse?.full_name || '-'
+    ]);
+
+    autoTable(doc, {
+      head: [tableColumn],
+      body: tableRows,
+      startY: 35,
+      styles: { fontSize: 9 },
+      headStyles: { fillColor: [41, 128, 185] },
+    });
+
+    doc.save(`san_report_${date}.pdf`);
   };
 
   return (
@@ -128,13 +155,22 @@ export default function AdminDashboard() {
                 className="rounded border border-gray-300 px-3 py-2 text-gray-900"
               />
             </div>
-            <button
-              onClick={downloadCSV}
-              disabled={data.length === 0}
-              className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 disabled:opacity-50"
-            >
-              Download CSV
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={downloadCSV}
+                disabled={data.length === 0}
+                className="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700 disabled:opacity-50"
+              >
+                Download CSV
+              </button>
+              <button
+                onClick={downloadPDF}
+                disabled={data.length === 0}
+                className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 disabled:opacity-50"
+              >
+                Download PDF
+              </button>
+            </div>
           </div>
 
           {loading ? (
