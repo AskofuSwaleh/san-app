@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -25,6 +26,7 @@ export default function AdminDashboard() {
   const [date, setDate] = useState('');
   const [data, setData] = useState<ReportRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
 
   async function fetchReport() {
     setLoading(true);
@@ -70,9 +72,17 @@ export default function AdminDashboard() {
     return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
+  // Filter the data based on the search input
+  const filteredData = data.filter((p) => {
+    const term = search.toLowerCase();
+    const nameMatch = (p.learners?.full_name || '').toLowerCase().includes(term);
+    const admMatch = (p.learners?.admission_no || '').toLowerCase().includes(term);
+    return nameMatch || admMatch;
+  });
+
   const downloadCSV = () => {
     const headers = ['Admission No', 'Learner', 'Class', 'Reason', 'Status', 'Sent At', 'Acknowledged At', 'Closed At', 'Teacher', 'Nurse'];
-    const rows = data.map((p) => [
+    const rows = filteredData.map((p) => [
       p.learners?.admission_no || '',
       p.learners?.full_name || '',
       p.learners?.class_stream || '',
@@ -105,9 +115,13 @@ export default function AdminDashboard() {
     doc.text('Kenya High School', 14, 22);
     doc.setFontSize(12);
     doc.text(`Sanatorium Daily Report - ${date}`, 14, 30);
+    if (search) {
+      doc.setFontSize(10);
+      doc.text(`Filtered by: "${search}"`, 14, 36);
+    }
     
     const tableColumn = ["Learner", "Class", "Reason", "Status", "Sent", "Ack", "Closed", "Teacher", "Nurse"];
-    const tableRows = data.map(p => [
+    const tableRows = filteredData.map(p => [
       `${p.learners?.full_name}\n(${p.learners?.admission_no})`,
       p.learners?.class_stream || '',
       p.reason_category,
@@ -122,7 +136,7 @@ export default function AdminDashboard() {
     autoTable(doc, {
       head: [tableColumn],
       body: tableRows,
-      startY: 35,
+      startY: search ? 42 : 35, // Push table down if we have a search filter
       styles: { fontSize: 9 },
       headStyles: { fillColor: [41, 128, 185] },
     });
@@ -134,38 +148,58 @@ export default function AdminDashboard() {
     <main className="min-h-screen bg-gray-50 p-6">
       <div className="max-w-6xl mx-auto space-y-6">
         
+        {/* Header */}
         <div className="flex justify-between items-center bg-white p-4 rounded shadow">
           <div>
             <h1 className="text-xl font-bold text-gray-900">Admin Report</h1>
             <p className="text-sm text-gray-500">Kenya High School — Sanatorium Log</p>
           </div>
-          <button onClick={handleLogout} className="text-sm text-red-600 hover:underline">
-            Log out
-          </button>
+          <div className="flex gap-4">
+            <Link href="/admin/audit" className="text-sm text-blue-600 hover:underline">
+              View Audit Log
+            </Link>
+            <button onClick={handleLogout} className="text-sm text-red-600 hover:underline">
+              Log out
+            </button>
+          </div>
         </div>
 
         <div className="bg-white p-6 rounded shadow">
-          <div className="flex justify-between items-end mb-6">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Select Date</label>
-              <input
-                type="date"
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-                className="rounded border border-gray-300 px-3 py-2 text-gray-900"
-              />
+          {/* Controls */}
+          <div className="flex flex-wrap justify-between items-end gap-4 mb-6">
+            <div className="flex gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Select Date</label>
+                <input
+                  type="date"
+                  value={date}
+                  onChange={(e) => setDate(e.target.value)}
+                  className="rounded border border-gray-300 px-3 py-2 text-gray-900"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Search Learner</label>
+                <input
+                  type="text"
+                  placeholder="Name or Adm No..."
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="rounded border border-gray-300 px-3 py-2 text-gray-900 min-w-[200px]"
+                />
+              </div>
             </div>
+            
             <div className="flex gap-2">
               <button
                 onClick={downloadCSV}
-                disabled={data.length === 0}
+                disabled={filteredData.length === 0}
                 className="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700 disabled:opacity-50"
               >
                 Download CSV
               </button>
               <button
                 onClick={downloadPDF}
-                disabled={data.length === 0}
+                disabled={filteredData.length === 0}
                 className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 disabled:opacity-50"
               >
                 Download PDF
@@ -173,10 +207,11 @@ export default function AdminDashboard() {
             </div>
           </div>
 
+          {/* Table */}
           {loading ? (
             <p className="text-gray-500">Loading report...</p>
-          ) : data.length === 0 ? (
-            <p className="text-gray-500">No passes sent on this date.</p>
+          ) : filteredData.length === 0 ? (
+            <p className="text-gray-500">No passes found matching your criteria.</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse text-sm">
@@ -193,7 +228,7 @@ export default function AdminDashboard() {
                   </tr>
                 </thead>
                 <tbody>
-                  {data.map((p) => (
+                  {filteredData.map((p) => (
                     <tr key={p.id} className="border-b hover:bg-gray-50">
                       <td className="p-3">
                         <span className="font-medium text-gray-900">{p.learners?.full_name}</span>

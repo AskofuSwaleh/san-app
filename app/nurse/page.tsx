@@ -11,6 +11,7 @@ type Pass = {
   status: string;
   sent_at: string;
   acknowledged_at: string | null;
+  closed_at: string | null; // Added this
   learners: { full_name: string; admission_no: string; class_stream: string } | null;
   staff: { full_name: string } | null;
 };
@@ -21,25 +22,31 @@ export default function NurseDashboard() {
 
   const [incoming, setIncoming] = useState<Pass[]>([]);
   const [inSan, setInSan] = useState<Pass[]>([]);
+  const [completed, setCompleted] = useState<Pass[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Fetch and sort passes
   async function fetchPasses() {
+    const start = new Date();
+    start.setHours(0, 0, 0, 0); // Midnight today
+
     const { data, error } = await supabase
       .from('passes')
       .select(`
-        id, reason_category, reason_note, status, sent_at, acknowledged_at,
+        id, reason_category, reason_note, status, sent_at, acknowledged_at, closed_at,
         learners ( full_name, admission_no, class_stream ),
         staff:teacher_id ( full_name )
       `)
-      .in('status', ['pending', 'acknowledged'])
-      .order('sent_at', { ascending: true });
+      .gte('sent_at', start.toISOString())
+      .order('sent_at', { ascending: false });
 
     if (!error && data) {
       const pending = data.filter((p) => p.status === 'pending') as unknown as Pass[];
       const acked = data.filter((p) => p.status === 'acknowledged') as unknown as Pass[];
+      const done = data.filter((p) => ['returned', 'sent_home'].includes(p.status)) as unknown as Pass[];
+      
       setIncoming(pending);
       setInSan(acked);
+      setCompleted(done);
     }
     setLoading(false);
   }
@@ -47,14 +54,12 @@ export default function NurseDashboard() {
   useEffect(() => {
     fetchPasses();
 
-    // Set up realtime subscription
     const channel = supabase
       .channel('nurse-updates')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'passes' },
         () => {
-          // When anything changes in the passes table, re-fetch the lists
           fetchPasses();
         }
       )
@@ -72,7 +77,7 @@ export default function NurseDashboard() {
 
   async function handleClose(passId: string, outcome: 'returned' | 'sent_home') {
     const note = prompt(`Any notes for sending the learner ${outcome === 'returned' ? 'back to class' : 'home'}? (Optional)`);
-    if (note === null) return; // user clicked cancel
+    if (note === null) return;
 
     const { error } = await supabase.rpc('close_pass', { 
       p_pass_id: passId, 
@@ -88,7 +93,12 @@ export default function NurseDashboard() {
     router.refresh();
   }
 
-  const formatTime = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const formatTime = (iso: string | null) => {
+    if (!iso) return '-';
+    return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  };
+
+  if (loading) return <div className="p-6 text-center text-gray-500">Loading dashboard...</div>;
 
   return (
     <main className="min-h-screen bg-gray-50 p-6">
@@ -183,6 +193,34 @@ export default function NurseDashboard() {
           </div>
 
         </div>
+
+        {/* Completed Today Section */}
+        <div className="bg-white p-6 rounded shadow mt-6">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4 flex justify-between">
+            <span>Completed Today</span>
+            <span className="bg-gray-100 text-gray-600 py-1 px-2 rounded-full text-sm">{completed.length}</span>
+          </h2>
+          {completed.length === 0 ? (
+            <p className="text-gray-500 text-sm">No completed passes yet today.</p>
+          ) : (
+            <ul className="divide-y divide-gray-100">
+              {completed.map((p) => (
+                <li key={p.id} className="py-3 flex justify-between items-center text-sm">
+                  <div>
+                    <span className="font-medium text-gray-900">{p.learners?.full_name}</span>
+                    <span className="text-gray-500 ml-2">({p.learners?.admission_no})</span>
+                    <span className="text-gray-400 mx-2">•</span>
+                    <span className="text-gray-600 capitalize">{p.reason_category}</span>
+                  </div>
+                  <div className="text-gray-500">
+                    {p.status === 'returned' ? 'Returned to Class' : 'Sent Home'} at {formatTime(p.closed_at)}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
       </div>
     </main>
   );
