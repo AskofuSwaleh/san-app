@@ -43,7 +43,7 @@ export default function AuditLogPage() {
 
   async function handleLogout() {
     await supabase.auth.signOut();
-    router.push('/login');
+    window.location.href = '/login'; // Force a hard refresh
   }
 
   const formatTime = (iso: string) => {

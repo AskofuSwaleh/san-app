@@ -89,8 +89,7 @@ export default function NurseDashboard() {
 
   async function handleLogout() {
     await supabase.auth.signOut();
-    router.push('/login');
-    router.refresh();
+    window.location.href = '/login'; // Force a hard refresh
   }
 
   const formatTime = (iso: string | null) => {
