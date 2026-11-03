@@ -3,8 +3,8 @@
 import { useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import ThemeToggle from '@/components/ThemeToggle';
 
-// 1. The actual form component
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -34,7 +34,6 @@ function LoginForm() {
       return;
     }
 
-    // Ask the DB for the role so we know where to send them
     const { data: staff } = await supabase
       .from('staff')
       .select('role')
@@ -51,57 +50,62 @@ function LoginForm() {
   }
 
   return (
-    <form
-      onSubmit={handleSubmit}
-      className="w-full max-w-sm bg-white p-8 rounded-lg shadow space-y-4"
-    >
-      <h1 className="text-2xl font-bold text-gray-900">Sanatorium Pass</h1>
-      <p className="text-sm text-gray-600">Kenya High School — staff login</p>
-
-      <div>
-        <label className="block text-sm font-medium text-gray-700">Email</label>
-        <input
-          type="email"
-          required
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-gray-900"
-        />
+    <main className="relative min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900 p-6 transition-colors duration-300">
+      
+      {/* Dark Mode Toggle Button */}
+      <div className="absolute top-4 right-4">
+        <ThemeToggle />
       </div>
 
-      <div>
-        <label className="block text-sm font-medium text-gray-700">Password</label>
-        <input
-          type="password"
-          required
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-gray-900"
-        />
-      </div>
-
-      {error && (
-        <p className="text-sm text-red-600 bg-red-50 p-2 rounded">{error}</p>
-      )}
-
-      <button
-        type="submit"
-        disabled={loading}
-        className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 disabled:opacity-50"
+      <form
+        onSubmit={handleSubmit}
+        className="w-full max-w-sm bg-white dark:bg-gray-800 p-8 rounded-lg shadow space-y-4 transition-colors duration-300"
       >
-        {loading ? 'Signing in…' : 'Sign in'}
-      </button>
-    </form>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Sanatorium Pass</h1>
+        <p className="text-sm text-gray-600 dark:text-gray-400">Kenya High School — staff login</p>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Email</label>
+          <input
+            type="email"
+            required
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            className="mt-1 w-full rounded border border-gray-300 dark:border-gray-600 px-3 py-2 text-gray-900 dark:text-white dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Password</label>
+          <input
+            type="password"
+            required
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            className="mt-1 w-full rounded border border-gray-300 dark:border-gray-600 px-3 py-2 text-gray-900 dark:text-white dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+
+        {error && (
+          <p className="text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/30 p-2 rounded">{error}</p>
+        )}
+
+        <button
+          type="submit"
+          disabled={loading}
+          className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 disabled:opacity-50 transition-colors"
+        >
+          {loading ? 'Signing in…' : 'Sign in'}
+        </button>
+      </form>
+    </main>
   );
 }
 
-// 2. The page wrapper required by Next.js
 export default function LoginPage() {
   return (
-    <main className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
-      <Suspense fallback={<div className="text-gray-500">Loading...</div>}>
-        <LoginForm />
-      </Suspense>
-    </main>
+    <Suspense fallback={<div className="p-6 text-center text-gray-500 dark:text-gray-400">Loading...</div>}>
+      <LoginForm />
+    </Suspense>
   );
 }

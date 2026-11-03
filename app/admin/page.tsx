@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import ThemeToggle from '@/components/ThemeToggle';
 
 type ReportRow = {
   id: string;
@@ -63,7 +64,7 @@ export default function AdminDashboard() {
 
   async function handleLogout() {
     await supabase.auth.signOut();
-    window.location.href = '/login'; // Force a hard refresh
+    window.location.href = '/login';
   }
 
   const formatTime = (iso: string | null) => {
@@ -71,7 +72,6 @@ export default function AdminDashboard() {
     return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
-  // Filter the data based on the search input
   const filteredData = data.filter((p) => {
     const term = search.toLowerCase();
     const nameMatch = (p.learners?.full_name || '').toLowerCase().includes(term);
@@ -135,7 +135,7 @@ export default function AdminDashboard() {
     autoTable(doc, {
       head: [tableColumn],
       body: tableRows,
-      startY: search ? 42 : 35, // Push table down if we have a search filter
+      startY: search ? 42 : 35,
       styles: { fontSize: 9 },
       headStyles: { fillColor: [41, 128, 185] },
     });
@@ -144,46 +144,45 @@ export default function AdminDashboard() {
   };
 
   return (
-    <main className="min-h-screen bg-gray-50 p-6">
+    <main className="min-h-screen bg-gray-50 dark:bg-gray-900 p-6 transition-colors">
       <div className="max-w-6xl mx-auto space-y-6">
         
-        {/* Header */}
-        <div className="flex justify-between items-center bg-white p-4 rounded shadow">
+        <div className="flex justify-between items-center bg-white dark:bg-gray-800 p-4 rounded shadow transition-colors">
           <div>
-            <h1 className="text-xl font-bold text-gray-900">Admin Report</h1>
-            <p className="text-sm text-gray-500">Kenya High School — Sanatorium Log</p>
+            <h1 className="text-xl font-bold text-gray-900 dark:text-white">Admin Report</h1>
+            <p className="text-sm text-gray-500 dark:text-gray-400">Kenya High School — Sanatorium Log</p>
           </div>
-          <div className="flex gap-4">
-            <Link href="/admin/audit" className="text-sm text-blue-600 hover:underline">
+          <div className="flex items-center gap-4">
+            <Link href="/admin/audit" className="text-sm text-blue-600 dark:text-blue-400 hover:underline">
               View Audit Log
             </Link>
-            <button onClick={handleLogout} className="text-sm text-red-600 hover:underline">
+            <ThemeToggle />
+            <button onClick={handleLogout} className="text-sm text-red-600 dark:text-red-400 hover:underline">
               Log out
             </button>
           </div>
         </div>
 
-        <div className="bg-white p-6 rounded shadow">
-          {/* Controls */}
+        <div className="bg-white dark:bg-gray-800 p-6 rounded shadow transition-colors">
           <div className="flex flex-wrap justify-between items-end gap-4 mb-6">
             <div className="flex gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Select Date</label>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Select Date</label>
                 <input
                   type="date"
                   value={date}
                   onChange={(e) => setDate(e.target.value)}
-                  className="rounded border border-gray-300 px-3 py-2 text-gray-900"
+                  className="rounded border border-gray-300 dark:border-gray-600 px-3 py-2 text-gray-900 dark:text-white dark:bg-gray-700"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Search Learner</label>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Search Learner</label>
                 <input
                   type="text"
                   placeholder="Name or Adm No..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  className="rounded border border-gray-300 px-3 py-2 text-gray-900 min-w-[200px]"
+                  className="rounded border border-gray-300 dark:border-gray-600 px-3 py-2 text-gray-900 dark:text-white dark:bg-gray-700 min-w-[200px]"
                 />
               </div>
             </div>
@@ -192,65 +191,64 @@ export default function AdminDashboard() {
               <button
                 onClick={downloadCSV}
                 disabled={filteredData.length === 0}
-                className="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700 disabled:opacity-50"
+                className="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700 disabled:opacity-50 transition-colors"
               >
                 Download CSV
               </button>
               <button
                 onClick={downloadPDF}
                 disabled={filteredData.length === 0}
-                className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 disabled:opacity-50"
+                className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 disabled:opacity-50 transition-colors"
               >
                 Download PDF
               </button>
             </div>
           </div>
 
-          {/* Table */}
           {loading ? (
-            <p className="text-gray-500">Loading report...</p>
+            <p className="text-gray-500 dark:text-gray-400">Loading report...</p>
           ) : filteredData.length === 0 ? (
-            <p className="text-gray-500">No passes found matching your criteria.</p>
+            <p className="text-gray-500 dark:text-gray-400">No passes found matching your criteria.</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse text-sm">
                 <thead>
-                  <tr className="bg-gray-100 text-gray-700">
-                    <th className="p-3 border-b">Learner</th>
-                    <th className="p-3 border-b">Class</th>
-                    <th className="p-3 border-b">Reason</th>
-                    <th className="p-3 border-b">Status</th>
-                    <th className="p-3 border-b">Sent</th>
-                    <th className="p-3 border-b">Ack</th>
-                    <th className="p-3 border-b">Closed</th>
-                    <th className="p-3 border-b">Teacher</th>
+                  <tr className="bg-gray-100 dark:bg-gray-900 text-gray-700 dark:text-gray-300">
+                    <th className="p-3 border-b dark:border-gray-700">Learner</th>
+                    <th className="p-3 border-b dark:border-gray-700">Class</th>
+                    <th className="p-3 border-b dark:border-gray-700">Reason</th>
+                    <th className="p-3 border-b dark:border-gray-700">Status</th>
+                    <th className="p-3 border-b dark:border-gray-700">Sent</th>
+                    <th className="p-3 border-b dark:border-gray-700">Ack</th>
+                    <th className="p-3 border-b dark:border-gray-700">Closed</th>
+                    <th className="p-3 border-b dark:border-gray-700">Teacher</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filteredData.map((p) => (
-                    <tr key={p.id} className="border-b hover:bg-gray-50">
+                    <tr key={p.id} className="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50">
                       <td className="p-3">
-                        <span className="font-medium text-gray-900">{p.learners?.full_name}</span>
+                        <span className="font-medium text-gray-900 dark:text-white">{p.learners?.full_name}</span>
                         <br/>
-                        <span className="text-xs text-gray-500">{p.learners?.admission_no}</span>
+                        <span className="text-xs text-gray-500 dark:text-gray-400">{p.learners?.admission_no}</span>
                       </td>
-                      <td className="p-3 text-gray-600">{p.learners?.class_stream}</td>
-                      <td className="p-3 text-gray-600 capitalize">{p.reason_category}</td>
+                      <td className="p-3 text-gray-600 dark:text-gray-300">{p.learners?.class_stream}</td>
+                      <td className="p-3 text-gray-600 dark:text-gray-300 capitalize">{p.reason_category}</td>
                       <td className="p-3">
                         <span className={`inline-block px-2 py-1 rounded text-xs font-medium ${
-                          p.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
-                          p.status === 'acknowledged' ? 'bg-blue-100 text-blue-800' :
-                          p.status === 'returned' ? 'bg-green-100 text-green-800' :
-                          p.status === 'expired' ? 'bg-red-100 text-red-800' :
-                          'bg-gray-100 text-gray-800'
+                          p.status === 'pending' ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/50 dark:text-yellow-200' :
+                          p.status === 'acknowledged' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/50 dark:text-blue-200' :
+                          p.status === 'returned' ? 'bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-200' :
+                          p.status === 'expired' ? 'bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-200' :
+                          'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200'
                         }`}>
                           {p.status}
                         </span>
                       </td>
-                      <td className="p-3 text-gray-600">{formatTime(p.sent_at)}</td>
-                      <td className="p-3 text-gray-600">{formatTime(p.acknowledged_at)}</td>
-                      <td className="p-3 text-gray-600">{formatTime(p.closed_at)}</td>
-                      <td className="p-3 text-gray-600">{p.teacher?.full_name}</td>
+                      <td className="p-3 text-gray-600 dark:text-gray-300">{formatTime(p.sent_at)}</td>
+                      <td className="p-3 text-gray-600 dark:text-gray-300">{formatTime(p.acknowledged_at)}</td>
+                      <td className="p-3 text-gray-600 dark:text-gray-300">{formatTime(p.closed_at)}</td>
+                      <td className="p-3 text-gray-600 dark:text-gray-300">{p.teacher?.full_name}</td>
                     </tr>
                   ))}
                 </tbody>
