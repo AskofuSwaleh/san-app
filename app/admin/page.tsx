@@ -54,13 +54,35 @@ export default function AdminDashboard() {
     setLoading(false);
   }
 
+
+
+  // 1. Set today's date on first load
   useEffect(() => {
     if (!date) {
       setDate(new Date().toISOString().split('T')[0]);
-      return;
     }
-    fetchReport();
   }, [date]);
+
+  // 2. Fetch data AND listen for realtime changes
+  useEffect(() => {
+    if (!date) return;
+
+    fetchReport();
+
+    const channel = supabase
+      .channel('admin-updates')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'passes' }, () => {
+        fetchReport();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [date]);
+
+
+
 
   async function handleLogout() {
     await supabase.auth.signOut();
@@ -235,15 +257,20 @@ export default function AdminDashboard() {
                       <td className="p-3 text-gray-600 dark:text-gray-300">{p.learners?.class_stream}</td>
                       <td className="p-3 text-gray-600 dark:text-gray-300 capitalize">{p.reason_category}</td>
                       <td className="p-3">
+
                         <span className={`inline-block px-2 py-1 rounded text-xs font-medium ${
                           p.status === 'pending' ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/50 dark:text-yellow-200' :
                           p.status === 'acknowledged' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/50 dark:text-blue-200' :
+                          p.status === 'observation' ? 'bg-orange-100 text-orange-800 dark:bg-orange-900/50 dark:text-orange-200' :
                           p.status === 'returned' ? 'bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-200' :
-                          p.status === 'expired' ? 'bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-200' :
+                          p.status === 'sent_home' ? 'bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-200 animate-pulse' :
                           'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200'
                         }`}>
-                          {p.status}
+                          {p.status === 'sent_home' ? 'ACTION: Send Home' : p.status}
                         </span>
+
+
+
                       </td>
                       <td className="p-3 text-gray-600 dark:text-gray-300">{formatTime(p.sent_at)}</td>
                       <td className="p-3 text-gray-600 dark:text-gray-300">{formatTime(p.acknowledged_at)}</td>
