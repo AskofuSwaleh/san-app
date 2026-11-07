@@ -222,12 +222,15 @@ export default function AdminDashboard() {
             <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400">Kenya High School — Sanatorium Log</p>
           </div>
           <div className="flex flex-wrap items-center gap-3 sm:gap-4">
-            <Link href="/admin/staff" className="text-sm text-blue-600 dark:text-blue-400 hover:underline">
-              Manage Staff
+
+
+            <Link href="/admin/anomalies" className="text-sm text-purple-600 dark:text-purple-400 hover:underline font-medium">
+              Anomalies
             </Link>
             <Link href="/admin/audit" className="text-sm text-blue-600 dark:text-blue-400 hover:underline">
               Audit Log
             </Link>
+
             <ThemeToggle />
             <button onClick={handleLogout} className="text-sm text-red-600 dark:text-red-400 hover:underline">
               Log out
