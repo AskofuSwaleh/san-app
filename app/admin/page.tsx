@@ -223,7 +223,9 @@ export default function AdminDashboard() {
           </div>
           <div className="flex flex-wrap items-center gap-3 sm:gap-4">
 
-
+            <Link href="/admin/duty" className="text-sm text-blue-600 dark:text-blue-400 hover:underline">
+              Duty Roster
+            </Link>
             <Link href="/admin/anomalies" className="text-sm text-purple-600 dark:text-purple-400 hover:underline font-medium">
               Anomalies
             </Link>

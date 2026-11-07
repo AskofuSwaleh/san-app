@@ -13,6 +13,7 @@ type ModalProps = {
   confirmText?: string;
   isDanger?: boolean;
   isLoading?: boolean;
+  children?: React.ReactNode; // ADD THIS
 };
 
 export default function Modal({
@@ -26,10 +27,10 @@ export default function Modal({
   confirmText = 'Confirm',
   isDanger = false,
   isLoading = false,
+  children, // ADD THIS
 }: ModalProps) {
   const [inputValue, setInputValue] = useState('');
 
-  // Reset input when opened/closed
   useEffect(() => {
     if (isOpen) setInputValue('');
   }, [isOpen]);
@@ -44,6 +45,9 @@ export default function Modal({
           <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-2">{title}</h3>
           <p className="text-gray-600 dark:text-gray-300 text-sm mb-4">{message}</p>
           
+          {/* RENDER CHILDREN HERE */}
+          {children && <div className="mb-4">{children}</div>}
+
           {requireInput && (
             <input
               type="text"
@@ -57,22 +61,10 @@ export default function Modal({
         </div>
 
         <div className="bg-gray-50 dark:bg-gray-900/50 px-6 py-3 flex justify-end gap-3 border-t border-gray-100 dark:border-gray-700">
-          <button
-            onClick={onCancel}
-            disabled={isLoading}
-            className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors disabled:opacity-50"
-          >
+          <button onClick={onCancel} disabled={isLoading} className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors disabled:opacity-50">
             Cancel
           </button>
-          <button
-            onClick={() => onConfirm(inputValue)}
-            disabled={isLoading || (requireInput && !inputValue.trim())}
-            className={`px-4 py-2 text-sm font-medium text-white rounded transition-colors disabled:opacity-50 ${
-              isDanger 
-                ? 'bg-red-600 hover:bg-red-700' 
-                : 'bg-blue-600 hover:bg-blue-700'
-            }`}
-          >
+          <button onClick={() => onConfirm(inputValue)} disabled={isLoading || (requireInput && !inputValue.trim())} className={`px-4 py-2 text-sm font-medium text-white rounded transition-colors disabled:opacity-50 ${isDanger ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'}`}>
             {isLoading ? 'Processing...' : confirmText}
           </button>
         </div>
