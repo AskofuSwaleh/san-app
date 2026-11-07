@@ -13,6 +13,7 @@ type ReportRow = {
   id: string;
   status: string;
   admin_released: boolean;
+  admin_rejected: boolean;
   reason_category: string;
   sent_at: string;
   acknowledged_at: string | null;
@@ -31,9 +32,14 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
 
-  // Modal State for releasing a learner
-  const [releaseModal, setReleaseModal] = useState<{ isOpen: boolean; passId: string | null; name: string }>({
-    isOpen: false, passId: null, name: ''
+  // Modal State
+  const [actionModal, setActionModal] = useState<{ 
+    isOpen: boolean; 
+    passId: string | null; 
+    name: string; 
+    action: 'release' | 'reject' | null 
+  }>({
+    isOpen: false, passId: null, name: '', action: null
   });
 
   async function fetchReport() {
@@ -47,7 +53,7 @@ export default function AdminDashboard() {
     const { data: passes, error } = await supabase
       .from('passes')
       .select(`
-        id, status, admin_released, reason_category, sent_at, acknowledged_at, closed_at,
+        id, status, admin_released, admin_rejected, reason_category, sent_at, acknowledged_at, closed_at,
         learners ( full_name, admission_no, class_stream ),
         teacher:teacher_id ( full_name ),
         nurse:nurse_id ( full_name )
@@ -85,21 +91,20 @@ export default function AdminDashboard() {
     };
   }, [date]);
 
-  // Handle opening the modal
-  function handleReleaseClick(passId: string, name: string) {
-    setReleaseModal({ isOpen: true, passId, name });
+  function handleActionClick(passId: string, name: string, action: 'release' | 'reject') {
+    setActionModal({ isOpen: true, passId, name, action });
   }
 
-  // Handle confirming the release
-  async function handleConfirmRelease() {
-    if (!releaseModal.passId) return;
+  async function handleConfirmAction() {
+    if (!actionModal.passId || !actionModal.action) return;
     
-    const { error } = await supabase.rpc('release_learner', { p_pass_id: releaseModal.passId });
+    const rpcName = actionModal.action === 'release' ? 'release_learner' : 'reject_send_home';
+    const { error } = await supabase.rpc(rpcName, { p_pass_id: actionModal.passId });
     
     if (error) {
       alert(error.message);
     } else {
-      setReleaseModal({ isOpen: false, passId: null, name: '' });
+      setActionModal({ isOpen: false, passId: null, name: '', action: null });
       fetchReport(); 
     }
   }
@@ -130,7 +135,7 @@ export default function AdminDashboard() {
     else if (p.status === 'acknowledged') colorClass = 'bg-blue-100 text-blue-800 dark:bg-blue-900/50 dark:text-blue-200';
     else if (p.status === 'observation') colorClass = 'bg-orange-100 text-orange-800 dark:bg-orange-900/50 dark:text-orange-200';
     else if (p.status === 'returned') colorClass = 'bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-200';
-    else if (p.status === 'sent_home' && !p.admin_released) {
+    else if (p.status === 'sent_home' && !p.admin_released && !p.admin_rejected) {
       colorClass = 'bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-200 animate-pulse';
       text = 'ACTION: Send Home';
     }
@@ -150,7 +155,7 @@ export default function AdminDashboard() {
       p.learners?.full_name || '',
       p.learners?.class_stream || '',
       p.reason_category,
-      p.status === 'sent_home' && !p.admin_released ? 'ACTION: Send Home' : p.status,
+      p.status === 'sent_home' && !p.admin_released && !p.admin_rejected ? 'ACTION: Send Home' : p.status,
       formatTime(p.sent_at),
       formatTime(p.acknowledged_at),
       formatTime(p.closed_at),
@@ -187,7 +192,7 @@ export default function AdminDashboard() {
       `${p.learners?.full_name}\n(${p.learners?.admission_no})`,
       p.learners?.class_stream || '',
       p.reason_category,
-      p.status === 'sent_home' && !p.admin_released ? 'ACTION: Send Home' : p.status,
+      p.status === 'sent_home' && !p.admin_released && !p.admin_rejected ? 'ACTION: Send Home' : p.status,
       formatTime(p.sent_at),
       formatTime(p.acknowledged_at),
       formatTime(p.closed_at),
@@ -275,26 +280,34 @@ export default function AdminDashboard() {
           </div>
 
           {/* Action Center */}
-          {filteredData.filter(p => p.status === 'sent_home' && !p.admin_released).length > 0 && (
+          {filteredData.filter(p => p.status === 'sent_home' && !p.admin_released && !p.admin_rejected).length > 0 && (
             <div className="mb-6 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
               <h3 className="text-red-800 dark:text-red-400 font-bold mb-3 flex items-center gap-2">
                 ⚠️ Action Required: Learners Awaiting Release
               </h3>
               <ul className="space-y-2">
-                {filteredData.filter(p => p.status === 'sent_home' && !p.admin_released).map(p => (
-                  <li key={p.id} className="flex flex-col sm:flex-row justify-between sm:items-center bg-white dark:bg-gray-800 p-3 rounded shadow-sm border border-red-100 dark:border-gray-700 gap-3">
+                {filteredData.filter(p => p.status === 'sent_home' && !p.admin_released && !p.admin_rejected).map(p => (
+                  <li key={p.id} className="flex flex-col xl:flex-row justify-between xl:items-center bg-white dark:bg-gray-800 p-3 rounded shadow-sm border border-red-100 dark:border-gray-700 gap-3">
                     <div>
                       <span className="font-bold text-gray-900 dark:text-white">{p.learners?.full_name}</span>
                       <span className="text-gray-500 dark:text-gray-400 ml-2">({p.learners?.admission_no})</span>
                       <span className="hidden sm:inline text-gray-400 mx-2">•</span>
                       <span className="block sm:inline text-gray-600 dark:text-gray-300 text-sm mt-1 sm:mt-0">Recommended at {formatTime(p.closed_at)}</span>
                     </div>
-                    <button
-                      onClick={() => handleReleaseClick(p.id, p.learners?.full_name || 'Learner')}
-                      className="w-full sm:w-auto bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 text-sm font-medium transition-colors"
-                    >
-                      Release Learner
-                    </button>
+                    <div className="flex gap-2 w-full xl:w-auto">
+                      <button
+                        onClick={() => handleActionClick(p.id, p.learners?.full_name || 'Learner', 'reject')}
+                        className="flex-1 xl:flex-none bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 px-4 py-2 rounded hover:bg-gray-300 dark:hover:bg-gray-600 text-sm font-medium transition-colors"
+                      >
+                        Reject (Keep in School)
+                      </button>
+                      <button
+                        onClick={() => handleActionClick(p.id, p.learners?.full_name || 'Learner', 'release')}
+                        className="flex-1 xl:flex-none bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 text-sm font-medium transition-colors"
+                      >
+                        Release (Send Home)
+                      </button>
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -386,15 +399,19 @@ export default function AdminDashboard() {
         </div>
       </div>
 
-      {/* Sleek Custom Modal for Releasing a Learner */}
+      {/* The Sleek Modal (Handles both Release and Reject) */}
       <Modal
-        isOpen={releaseModal.isOpen}
-        title="Release Learner"
-        message={`Are you sure you want to release ${releaseModal.name}? This confirms that transport/home arrangements have been made.`}
-        confirmText="Yes, Release Learner"
-        isDanger={true}
-        onCancel={() => setReleaseModal({ isOpen: false, passId: null, name: '' })}
-        onConfirm={handleConfirmRelease}
+        isOpen={actionModal.isOpen}
+        title={actionModal.action === 'release' ? 'Release Learner' : 'Reject Send Home'}
+        message={
+          actionModal.action === 'release' 
+            ? `Are you sure you want to release ${actionModal.name}? This confirms that transport/home arrangements have been made.`
+            : `Are you sure you want to reject the nurse's recommendation for ${actionModal.name}? The learner will be kept in school and marked as Returned to Class.`
+        }
+        confirmText={actionModal.action === 'release' ? 'Yes, Release Learner' : 'Yes, Reject'}
+        isDanger={actionModal.action === 'release'} // Red button for release, blue for reject
+        onCancel={() => setActionModal({ isOpen: false, passId: null, name: '', action: null })}
+        onConfirm={handleConfirmAction}
       />
     </main>
   );
