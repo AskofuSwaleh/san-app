@@ -63,7 +63,7 @@ function TeacherDashboard() {
         setLearnerPreview(null);
       }
       setIsSearching(false);
-    }, 500); // Wait 500ms after they stop typing before searching
+    }, 500);
 
     return () => clearTimeout(delayDebounceFn);
   }, [admissionNo]);
@@ -99,15 +99,14 @@ function TeacherDashboard() {
 
     if (!error && data) {
       setTodayPasses(data as unknown as Pass[]);
-      // Keep ALL open passes from ALL teachers
-      const open = data.filter(p => ['pending', 'acknowledged'].includes(p.status));
+      const open = data.filter(p => ['pending', 'acknowledged', 'observation'].includes(p.status));
       setOpenPasses(open as unknown as Pass[]);
     }
   }
 
   async function handleSend(e: React.FormEvent) {
     e.preventDefault();
-    if (!learnerPreview) return; // Safety check
+    if (!learnerPreview) return;
     
     setLoading(true);
     setError(null);
@@ -145,7 +144,7 @@ function TeacherDashboard() {
   }
 
   return (
-    <main className="min-h-screen bg-gray-50 dark:bg-gray-900 p-6 transition-colors">
+    <main className="min-h-screen bg-gray-50 dark:bg-gray-900 p-4 sm:p-6 transition-colors">
       <div className="max-w-4xl mx-auto space-y-6">
         
         <div className="flex justify-between items-center bg-white dark:bg-gray-800 p-4 rounded shadow transition-colors">
@@ -176,10 +175,9 @@ function TeacherDashboard() {
                   placeholder="e.g. 20444" 
                   value={admissionNo} 
                   onChange={(e) => setAdmissionNo(e.target.value)} 
-                  className="mt-1 w-full rounded border border-gray-300 dark:border-gray-600 px-3 py-2 text-gray-900 dark:text-white dark:bg-gray-700" 
+                  className="mt-1 w-full rounded border border-gray-300 dark:border-gray-600 px-3 py-2 text-gray-900 dark:text-white dark:bg-gray-700 text-lg" 
                 />
                 
-                {/* Live Preview Box */}
                 {isSearching && <p className="text-xs text-blue-500 mt-1">Searching...</p>}
                 {learnerPreview && (
                   <div className="mt-2 p-2 bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800 rounded text-sm">
@@ -189,7 +187,7 @@ function TeacherDashboard() {
                 )}
                 {!isSearching && admissionNo.length > 2 && !learnerPreview && (
                   <div className="mt-2 p-2 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded text-sm text-red-700 dark:text-red-400">
-                    ❌ No active student found with this number.
+                    ❌ No active student found.
                   </div>
                 )}
               </div>
@@ -241,7 +239,7 @@ function TeacherDashboard() {
                         <p className="text-gray-500 dark:text-gray-400 text-xs">{p.learners?.admission_no} • {p.learners?.class_stream}</p>
                       </div>
                       <span className={`inline-block px-2 py-1 rounded text-xs font-medium ${p.status === 'pending' ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/50 dark:text-yellow-200' : 'bg-blue-100 text-blue-800 dark:bg-blue-900/50 dark:text-blue-200'}`}>
-                        {p.status === 'pending' ? 'On the way' : 'In San'}
+                        {p.status === 'pending' ? 'On the way' : p.status === 'observation' ? 'Resting' : 'In San'}
                       </span>
                     </div>
                     
@@ -259,45 +257,77 @@ function TeacherDashboard() {
           </div>
         </div>
 
-        {/* My Recent Passes (Only what this teacher sent) */}
+        {/* My Recent Passes - MOBILE OPTIMIZED */}
         <div className="bg-white dark:bg-gray-800 p-6 rounded shadow mt-6 transition-colors">
           <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">My Recent Passes (Today)</h2>
+          
           {todayPasses.length === 0 ? (
             <p className="text-gray-500 dark:text-gray-400 text-sm">You haven't sent any learners today.</p>
           ) : (
-            <table className="w-full text-left border-collapse text-sm">
-              <thead>
-                <tr className="bg-gray-50 dark:bg-gray-900 text-gray-600 dark:text-gray-300">
-                  <th className="p-2 border-b dark:border-gray-700">Learner</th>
-                  <th className="p-2 border-b dark:border-gray-700">Reason</th>
-                  <th className="p-2 border-b dark:border-gray-700">Status</th>
-                  <th className="p-2 border-b dark:border-gray-700">Sent At</th>
-                </tr>
-              </thead>
-              <tbody>
+            <>
+              {/* Desktop Table (Hidden on Mobile) */}
+              <div className="hidden sm:block overflow-x-auto">
+                <table className="w-full text-left border-collapse text-sm">
+                  <thead>
+                    <tr className="bg-gray-50 dark:bg-gray-900 text-gray-600 dark:text-gray-300">
+                      <th className="p-2 border-b dark:border-gray-700">Learner</th>
+                      <th className="p-2 border-b dark:border-gray-700">Reason</th>
+                      <th className="p-2 border-b dark:border-gray-700">Status</th>
+                      <th className="p-2 border-b dark:border-gray-700">Sent At</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {todayPasses.map((p) => (
+                      <tr key={p.id} className="border-b dark:border-gray-700">
+                        <td className="p-2 font-medium text-gray-900 dark:text-white">
+                          {p.learners?.full_name} <span className="text-gray-500 dark:text-gray-400 font-normal">({p.learners?.admission_no})</span>
+                        </td>
+                        <td className="p-2 text-gray-600 dark:text-gray-300 capitalize">{p.reason_category}</td>
+                        <td className="p-2">
+                          <span className={`inline-block px-2 py-1 rounded text-xs font-medium ${
+                            p.status === 'pending' ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/50 dark:text-yellow-200' :
+                            p.status === 'acknowledged' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/50 dark:text-blue-200' :
+                            p.status === 'observation' ? 'bg-orange-100 text-orange-800 dark:bg-orange-900/50 dark:text-orange-200' :
+                            p.status === 'returned' ? 'bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-200' :
+                            'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200'
+                          }`}>
+                            {p.status}
+                          </span>
+                        </td>
+                        <td className="p-2 text-gray-500 dark:text-gray-400">
+                          {new Date(p.sent_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Mobile Cards (Hidden on Desktop) */}
+              <div className="sm:hidden space-y-3">
                 {todayPasses.map((p) => (
-                  <tr key={p.id} className="border-b dark:border-gray-700">
-                    <td className="p-2 font-medium text-gray-900 dark:text-white">
-                      {p.learners?.full_name} <span className="text-gray-500 dark:text-gray-400 font-normal">({p.learners?.admission_no})</span>
-                    </td>
-                    <td className="p-2 text-gray-600 dark:text-gray-300 capitalize">{p.reason_category}</td>
-                    <td className="p-2">
-                      <span className={`inline-block px-2 py-1 rounded text-xs font-medium ${
+                  <div key={p.id} className="border border-gray-200 dark:border-gray-700 p-3 rounded bg-gray-50 dark:bg-gray-900/50">
+                    <div className="flex justify-between items-start mb-1">
+                      <p className="font-medium text-gray-900 dark:text-white">{p.learners?.full_name}</p>
+                      <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${
                         p.status === 'pending' ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/50 dark:text-yellow-200' :
                         p.status === 'acknowledged' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/50 dark:text-blue-200' :
+                        p.status === 'observation' ? 'bg-orange-100 text-orange-800 dark:bg-orange-900/50 dark:text-orange-200' :
                         p.status === 'returned' ? 'bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-200' :
                         'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200'
                       }`}>
                         {p.status}
                       </span>
-                    </td>
-                    <td className="p-2 text-gray-500 dark:text-gray-400">
-                      {new Date(p.sent_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </td>
-                  </tr>
+                    </div>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">{p.learners?.admission_no} • {p.learners?.class_stream}</p>
+                    <div className="flex justify-between items-center text-sm">
+                      <span className="text-gray-600 dark:text-gray-300 capitalize">{p.reason_category}</span>
+                      <span className="text-gray-400 text-xs">{new Date(p.sent_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                    </div>
+                  </div>
                 ))}
-              </tbody>
-            </table>
+              </div>
+            </>
           )}
         </div>
 
