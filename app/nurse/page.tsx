@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import ThemeToggle from '@/components/ThemeToggle';
+import Modal from '@/components/Modal';
 
 type Pass = {
   id: string;
@@ -29,6 +30,17 @@ export default function NurseDashboard() {
   
   const [historyDate, setHistoryDate] = useState('');
   const [loading, setLoading] = useState(true);
+
+  // Modal State
+  const [modalState, setModalState] = useState({ 
+    isOpen: false, 
+    passId: null as string | null, 
+    outcome: null as 'returned' | 'sent_home' | 'observation' | null, 
+    title: '', 
+    message: '', 
+    confirmText: '', 
+    isDanger: false 
+  });
 
   async function fetchData() {
     if (!historyDate) return;
@@ -121,20 +133,46 @@ export default function NurseDashboard() {
     if (error) alert(error.message);
   }
 
-  async function handleClose(passId: string, outcome: 'returned' | 'sent_home' | 'observation') {
-    const promptMessage = outcome === 'observation' 
-      ? 'Any notes for keeping the learner for observation?' 
-      : `Any notes for sending the learner ${outcome === 'returned' ? 'back to class' : 'home'}? (Optional)`;
-      
-    const note = prompt(promptMessage);
-    if (note === null) return;
+  // Open the Modal
+  function handleCloseClick(passId: string, outcome: 'returned' | 'sent_home' | 'observation') {
+    let title = '';
+    let message = '';
+    let confirmText = '';
+    let isDanger = false;
 
+    if (outcome === 'returned') {
+      title = 'Return to Class';
+      message = 'Are you sure this learner is ready to go back to class?';
+      confirmText = 'Return to Class';
+    } else if (outcome === 'sent_home') {
+      title = 'Recommend Send Home';
+      message = 'This will alert the Admin that this learner needs to be sent home.';
+      confirmText = 'Send Alert to Admin';
+      isDanger = true;
+    } else if (outcome === 'observation') {
+      title = 'Keep for Observation';
+      message = 'The learner will stay in the sanatorium for further observation.';
+      confirmText = 'Start Observation';
+    }
+
+    setModalState({ isOpen: true, passId, outcome, title, message, confirmText, isDanger });
+  }
+
+  // Confirm action in Modal
+  async function handleConfirmClose(note?: string) {
+    if (!modalState.passId || !modalState.outcome) return;
+    
     const { error } = await supabase.rpc('close_pass', { 
-      p_pass_id: passId, 
-      p_outcome: outcome,
+      p_pass_id: modalState.passId, 
+      p_outcome: modalState.outcome,
       p_note: note || null 
     });
-    if (error) alert(error.message);
+
+    if (error) {
+      alert(error.message);
+    } else {
+      setModalState({ ...modalState, isOpen: false });
+    }
   }
 
   async function handleLogout() {
@@ -251,7 +289,7 @@ export default function NurseDashboard() {
                     <div className="mt-3 flex flex-col gap-2">
                       <div className="flex flex-col sm:flex-row gap-2">
                         <button
-                          onClick={() => handleClose(p.id, 'returned')}
+                          onClick={() => handleCloseClick(p.id, 'returned')}
                           className="flex-1 bg-green-600 text-white py-2 rounded hover:bg-green-700 transition-colors"
                         >
                           Return to Class
@@ -259,7 +297,7 @@ export default function NurseDashboard() {
                         
                         {p.status === 'acknowledged' && (
                           <button
-                            onClick={() => handleClose(p.id, 'observation')}
+                            onClick={() => handleCloseClick(p.id, 'observation')}
                             className="flex-1 bg-yellow-600 text-white py-2 rounded hover:bg-yellow-700 transition-colors"
                           >
                             Rest (Observe)
@@ -268,7 +306,7 @@ export default function NurseDashboard() {
                       </div>
                       
                       <button
-                        onClick={() => handleClose(p.id, 'sent_home')}
+                        onClick={() => handleCloseClick(p.id, 'sent_home')}
                         className="w-full bg-red-600 text-white py-2 rounded hover:bg-red-700 transition-colors text-sm"
                       >
                         Recommend Send Home
@@ -282,7 +320,7 @@ export default function NurseDashboard() {
 
         </div>
 
-        {/* History Section - Mobile Optimized */}
+        {/* History Section */}
         <div className="bg-white dark:bg-gray-800 p-4 sm:p-6 rounded shadow mt-6 transition-colors">
           <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2 mb-4">
             <h2 className="text-lg font-semibold text-gray-900 dark:text-white">History</h2>
@@ -316,6 +354,19 @@ export default function NurseDashboard() {
         </div>
 
       </div>
+
+      {/* The New Sleek Modal */}
+      <Modal
+        isOpen={modalState.isOpen}
+        title={modalState.title}
+        message={modalState.message}
+        confirmText={modalState.confirmText}
+        isDanger={modalState.isDanger}
+        requireInput={false} 
+        inputPlaceholder="Add a note (optional)"
+        onCancel={() => setModalState({ ...modalState, isOpen: false })}
+        onConfirm={handleConfirmClose}
+      />
     </main>
   );
 }

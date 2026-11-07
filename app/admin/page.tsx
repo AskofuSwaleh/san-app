@@ -7,6 +7,7 @@ import { createClient } from '@/lib/supabase/client';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import ThemeToggle from '@/components/ThemeToggle';
+import Modal from '@/components/Modal';
 
 type ReportRow = {
   id: string;
@@ -29,6 +30,11 @@ export default function AdminDashboard() {
   const [data, setData] = useState<ReportRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+
+  // Modal State for releasing a learner
+  const [releaseModal, setReleaseModal] = useState<{ isOpen: boolean; passId: string | null; name: string }>({
+    isOpen: false, passId: null, name: ''
+  });
 
   async function fetchReport() {
     if (!date) return;
@@ -79,13 +85,21 @@ export default function AdminDashboard() {
     };
   }, [date]);
 
-  async function handleRelease(passId: string) {
-    if (!confirm('Confirm this learner has been released to go home?')) return;
+  // Handle opening the modal
+  function handleReleaseClick(passId: string, name: string) {
+    setReleaseModal({ isOpen: true, passId, name });
+  }
+
+  // Handle confirming the release
+  async function handleConfirmRelease() {
+    if (!releaseModal.passId) return;
     
-    const { error } = await supabase.rpc('release_learner', { p_pass_id: passId });
+    const { error } = await supabase.rpc('release_learner', { p_pass_id: releaseModal.passId });
+    
     if (error) {
       alert(error.message);
     } else {
+      setReleaseModal({ isOpen: false, passId: null, name: '' });
       fetchReport(); 
     }
   }
@@ -196,7 +210,7 @@ export default function AdminDashboard() {
     <main className="min-h-screen bg-gray-50 dark:bg-gray-900 p-4 sm:p-6 transition-colors">
       <div className="max-w-6xl mx-auto space-y-6">
         
-        {/* Header - Stacks on mobile */}
+        {/* Header */}
         <div className="flex flex-col sm:flex-row justify-between sm:items-center bg-white dark:bg-gray-800 p-4 rounded shadow transition-colors gap-4">
           <div>
             <h1 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-white">Admin Report</h1>
@@ -218,7 +232,7 @@ export default function AdminDashboard() {
 
         <div className="bg-white dark:bg-gray-800 p-4 sm:p-6 rounded shadow transition-colors">
           
-          {/* Controls - Stacks on mobile */}
+          {/* Controls */}
           <div className="flex flex-col lg:flex-row justify-between items-start lg:items-end gap-4 mb-6">
             <div className="flex flex-col sm:flex-row gap-4 w-full lg:w-auto">
               <div className="w-full sm:w-auto">
@@ -260,7 +274,7 @@ export default function AdminDashboard() {
             </div>
           </div>
 
-          {/* Action Center - Stacks beautifully on mobile */}
+          {/* Action Center */}
           {filteredData.filter(p => p.status === 'sent_home' && !p.admin_released).length > 0 && (
             <div className="mb-6 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
               <h3 className="text-red-800 dark:text-red-400 font-bold mb-3 flex items-center gap-2">
@@ -276,7 +290,7 @@ export default function AdminDashboard() {
                       <span className="block sm:inline text-gray-600 dark:text-gray-300 text-sm mt-1 sm:mt-0">Recommended at {formatTime(p.closed_at)}</span>
                     </div>
                     <button
-                      onClick={() => handleRelease(p.id)}
+                      onClick={() => handleReleaseClick(p.id, p.learners?.full_name || 'Learner')}
                       className="w-full sm:w-auto bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 text-sm font-medium transition-colors"
                     >
                       Release Learner
@@ -287,14 +301,14 @@ export default function AdminDashboard() {
             </div>
           )}
 
-          {/* The Report Data */}
+          {/* Data */}
           {loading ? (
             <p className="text-gray-500 dark:text-gray-400">Loading report...</p>
           ) : filteredData.length === 0 ? (
             <p className="text-gray-500 dark:text-gray-400">No passes found matching your criteria.</p>
           ) : (
             <>
-              {/* Desktop Table (Hidden on Mobile) */}
+              {/* Desktop Table */}
               <div className="hidden md:block overflow-x-auto">
                 <table className="w-full text-left border-collapse text-sm">
                   <thead>
@@ -330,7 +344,7 @@ export default function AdminDashboard() {
                 </table>
               </div>
 
-              {/* Mobile Cards (Hidden on Desktop) */}
+              {/* Mobile Cards */}
               <div className="md:hidden space-y-4">
                 {filteredData.map((p) => (
                   <div key={p.id} className="border border-gray-200 dark:border-gray-700 p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 shadow-sm">
@@ -371,6 +385,17 @@ export default function AdminDashboard() {
           )}
         </div>
       </div>
+
+      {/* Sleek Custom Modal for Releasing a Learner */}
+      <Modal
+        isOpen={releaseModal.isOpen}
+        title="Release Learner"
+        message={`Are you sure you want to release ${releaseModal.name}? This confirms that transport/home arrangements have been made.`}
+        confirmText="Yes, Release Learner"
+        isDanger={true}
+        onCancel={() => setReleaseModal({ isOpen: false, passId: null, name: '' })}
+        onConfirm={handleConfirmRelease}
+      />
     </main>
   );
 }
