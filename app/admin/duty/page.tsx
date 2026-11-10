@@ -19,29 +19,27 @@ export default function DutyRosterPage() {
   const [loading, setLoading] = useState(true);
 
   // Modal State
-  const [modalState, setModalState] = useState({ 
-    isOpen: false, 
-    weekStart: '', 
-    title: '', 
-    message: '', 
-    action: 'add' as 'add' | 'bulk', 
-  });
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [modalMode, setModalMode] = useState<'bulk' | 'manualWeek' | 'addToSpecificWeek'>('bulk');
+  
+  // Form State
+  const [bulkStartDate, setBulkStartDate] = useState('');
+  const [bulkWeeks, setBulkWeeks] = useState(13);
+  const [manualDate, setManualDate] = useState('');
   const [selectedStaffId, setSelectedStaffId] = useState('');
+  const [targetWeekStart, setTargetWeekStart] = useState('');
 
   async function fetchData() {
     setLoading(true);
-    // Fetch teachers only
     const { data: staff } = await supabase.from('staff').select('id, full_name, role').eq('is_active', true).in('role', ['teacher', 'admin']);
     if (staff) setStaffList(staff);
 
-    // Fetch roster for the current term (next 90 days)
     const { data: duty } = await supabase
       .from('duty_roster')
       .select(`
         id, staff_id, week_start_date,
         staff:staff_id ( id, full_name, role )
       `)
-      .gte('week_start_date', new Date(new Date().setDate(new Date().getDate() - 7)).toISOString().split('T')[0])
       .order('week_start_date', { ascending: true });
 
     if (duty) setRoster(duty as unknown as DutyRecord[]);
@@ -50,9 +48,14 @@ export default function DutyRosterPage() {
 
   useEffect(() => {
     fetchData();
+    // Set default bulk start date to this coming Monday
+    const d = new Date();
+    const day = d.getDay();
+    const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+    const monday = new Date(d.setDate(diff));
+    setBulkStartDate(monday.toISOString().split('T')[0]);
   }, []);
 
-  // Helper to get Monday of the current week safely
   const getMonday = (d: Date) => {
     const date = new Date(d);
     const day = date.getDay();
@@ -67,58 +70,75 @@ export default function DutyRosterPage() {
     return `${year}-${month}-${day}`;
   };
 
-  async function handleAddStaff() {
-    if (!selectedStaffId || !modalState.weekStart) return;
-    await supabase.from('duty_roster').insert({
-      staff_id: selectedStaffId,
-      week_start_date: modalState.weekStart
-    });
-    setModalState({ ...modalState, isOpen: false });
-    setSelectedStaffId('');
-    fetchData();
-  }
-
+  // 1. GENERATE TERM ROSTER (Clears old weeks first!)
   async function handleBulkGenerate() {
-    // 1. Get only teachers
     const teachers = staffList.filter(s => s.role === 'teacher');
-    if (teachers.length < 2) {
-      alert("You need at least 2 teachers in the system to generate a roster.");
+    if (teachers.length < 2) { alert("You need at least 2 teachers."); return; }
+    if (!bulkStartDate) { alert("Please select a start date."); return; }
+
+    // First, delete existing weeks from the selected start date onwards
+    // This prevents the "overlapping terms" bug
+    const { error: deleteError } = await supabase
+      .from('duty_roster')
+      .delete()
+      .gte('week_start_date', bulkStartDate);
+
+    if (deleteError) {
+      alert("Error clearing old roster: " + deleteError.message);
       return;
     }
 
-    // 2. Generate 12 weeks of Mondays starting from this week
     const weeks: string[] = [];
-    let currentMonday = getMonday(new Date());
-    for (let i = 0; i < 12; i++) {
+    let currentMonday = getMonday(new Date(bulkStartDate));
+    for (let i = 0; i < bulkWeeks; i++) {
       weeks.push(formatLocalDate(currentMonday));
       currentMonday.setDate(currentMonday.getDate() + 7);
     }
 
-    // 3. Prepare the data to insert
     const inserts: { staff_id: string; week_start_date: string }[] = [];
-    
-    for (const week of weeks) {
-      // Shuffle teachers and pick 2 or 3
-      const shuffled = [...teachers].sort(() => 0.5 - Math.random());
-      const numToPick = Math.floor(Math.random() * 2) + 2; // 2 or 3 teachers
-      const selected = shuffled.slice(0, numToPick);
+    let teacherIndex = 0;
 
-      for (const teacher of selected) {
-        inserts.push({
-          staff_id: teacher.id,
-          week_start_date: week
-        });
+    for (const week of weeks) {
+      const numToPick = 2; 
+      for (let i = 0; i < numToPick; i++) {
+        const teacher = teachers[teacherIndex % teachers.length];
+        inserts.push({ staff_id: teacher.id, week_start_date: week });
+        teacherIndex++;
       }
     }
 
-    // 4. Insert into database
     const { error } = await supabase.from('duty_roster').insert(inserts);
-    if (error) {
-      alert(error.message);
-    } else {
-      setModalState({ ...modalState, isOpen: false });
-      fetchData();
-    }
+
+    if (error) alert(error.message);
+    else { setIsModalOpen(false); fetchData(); }
+  }
+
+  // 2. ADD A SPECIFIC WEEK FROM SCRATCH
+  async function handleManualWeek() {
+    if (!selectedStaffId || !manualDate) return;
+    const selectedDate = new Date(manualDate);
+    const monday = getMonday(selectedDate);
+    
+    const { error } = await supabase.from('duty_roster').upsert({
+      staff_id: selectedStaffId,
+      week_start_date: formatLocalDate(monday)
+    }, { onConflict: 'staff_id, week_start_date', ignoreDuplicates: true });
+    
+    if (error) alert(error.message);
+    else { setIsModalOpen(false); setSelectedStaffId(''); setManualDate(''); fetchData(); }
+  }
+
+  // 3. ADD STAFF TO AN EXISTING WEEK CARD
+  async function handleAddToSpecificWeek() {
+    if (!selectedStaffId || !targetWeekStart) return;
+    
+    const { error } = await supabase.from('duty_roster').upsert({
+      staff_id: selectedStaffId,
+      week_start_date: targetWeekStart
+    }, { onConflict: 'staff_id, week_start_date', ignoreDuplicates: true });
+    
+    if (error) alert(error.message);
+    else { setIsModalOpen(false); setSelectedStaffId(''); setTargetWeekStart(''); fetchData(); }
   }
 
   async function handleRemove(id: string) {
@@ -139,12 +159,13 @@ export default function DutyRosterPage() {
     return `${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} - ${end.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}`;
   };
 
-  // Group roster by week
   const groupedRoster = roster.reduce((acc, record) => {
     if (!acc[record.week_start_date]) acc[record.week_start_date] = [];
     acc[record.week_start_date].push(record);
     return acc;
   }, {} as Record<string, DutyRecord[]>);
+
+  const sortedWeeks = Object.keys(groupedRoster).sort();
 
   return (
     <main className="min-h-screen bg-gray-50 dark:bg-gray-900 p-4 sm:p-6 transition-colors">
@@ -156,13 +177,9 @@ export default function DutyRosterPage() {
             <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400">Manage who can send learners to the san</p>
           </div>
           <div className="flex flex-wrap items-center gap-3 sm:gap-4">
-            <Link href="/admin" className="text-sm text-blue-600 dark:text-blue-400 hover:underline">
-              Back to Reports
-            </Link>
+            <Link href="/admin" className="text-sm text-blue-600 dark:text-blue-400 hover:underline">Back to Reports</Link>
             <ThemeToggle />
-            <button onClick={handleLogout} className="text-sm text-red-600 dark:text-red-400 hover:underline">
-              Log out
-            </button>
+            <button onClick={handleLogout} className="text-sm text-red-600 dark:text-red-400 hover:underline">Log out</button>
           </div>
         </div>
 
@@ -170,87 +187,118 @@ export default function DutyRosterPage() {
           <p className="text-center text-gray-500 py-10">Loading roster...</p>
         ) : (
           <div className="space-y-4">
-            {Object.keys(groupedRoster).length === 0 ? (
+            
+            <div className="flex flex-wrap justify-end gap-3 mb-2">
+              <button onClick={() => { setModalMode('manualWeek'); setIsModalOpen(true); }} className="text-sm font-medium bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 px-4 py-2 rounded hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors">
+                + Add Single Week
+              </button>
+              <button onClick={() => { setModalMode('bulk'); setIsModalOpen(true); }} className="text-sm font-medium bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors">
+                ⚡ Generate Term Roster
+              </button>
+            </div>
+
+            {sortedWeeks.length === 0 ? (
               <div className="bg-white dark:bg-gray-800 p-8 rounded shadow text-center">
-                <p className="text-gray-500 mb-4">No duty weeks assigned yet.</p>
-                <button 
-                  onClick={() => setModalState({ ...modalState, isOpen: true, action: 'bulk', title: 'Bulk Generate Roster', message: 'This will randomly assign 2-3 teachers for the next 12 weeks (This Term).' })}
-                  className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 transition-colors"
-                >
-                  Generate This Term's Roster
-                </button>
+                <p className="text-gray-500">No duty weeks assigned yet. Generate a term roster to start.</p>
               </div>
             ) : (
-              <>
-                <div className="flex justify-end mb-2">
-                  <button 
-                    onClick={() => setModalState({ ...modalState, isOpen: true, action: 'bulk', title: 'Bulk Generate Roster', message: 'This will randomly assign 2-3 teachers for the next 12 weeks.' })}
-                    className="text-sm text-blue-600 hover:underline"
-                  >
-                    + Generate Next 12 Weeks
-                  </button>
-                </div>
-                {Object.entries(groupedRoster).map(([weekStart, records]) => {
-                  const isCurrentWeek = new Date(weekStart) <= new Date() && new Date(new Date(weekStart).setDate(new Date(weekStart).getDate() + 6)) >= new Date();
-                  
-                  return (
-                    <div key={weekStart} className={`bg-white dark:bg-gray-800 rounded shadow transition-colors border-l-4 ${isCurrentWeek ? 'border-blue-500' : 'border-gray-300 dark:border-gray-700'}`}>
-                      <div className="p-4 flex justify-between items-center border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50 rounded-t">
-                        <div>
-                          <h2 className="font-bold text-gray-900 dark:text-white">
-                            Week: {formatDateDisplay(weekStart)}
-                            {isCurrentWeek && <span className="ml-2 text-xs bg-blue-100 text-blue-800 dark:bg-blue-900/50 dark:text-blue-200 px-2 py-0.5 rounded-full uppercase tracking-wider">Current</span>}
-                          </h2>
-                        </div>
-                        <button
-                          onClick={() => setModalState({ ...modalState, isOpen: true, action: 'add', weekStart, title: 'Add Teacher', message: `Assign a teacher to the week of ${formatDateDisplay(weekStart)}` })}
-                          className="text-sm text-blue-600 dark:text-blue-400 hover:underline font-medium"
-                        >
-                          + Add Staff
-                        </button>
+              sortedWeeks.map((weekStart, index) => {
+                const records = groupedRoster[weekStart];
+                const isCurrentWeek = new Date(weekStart) <= new Date() && new Date(new Date(weekStart).setDate(new Date(weekStart).getDate() + 6)) >= new Date();
+                
+                return (
+                  <div key={weekStart} className={`bg-white dark:bg-gray-800 rounded shadow transition-colors border-l-4 ${isCurrentWeek ? 'border-blue-500' : 'border-gray-300 dark:border-gray-700'}`}>
+                    <div className="p-4 flex justify-between items-center border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50 rounded-t">
+                      <div>
+                        <h2 className="font-bold text-gray-900 dark:text-white">
+                          Term Week {index + 1}: {formatDateDisplay(weekStart)}
+                          {isCurrentWeek && <span className="ml-2 text-xs bg-blue-100 text-blue-800 dark:bg-blue-900/50 dark:text-blue-200 px-2 py-0.5 rounded-full uppercase tracking-wider">Current</span>}
+                        </h2>
                       </div>
-                      <div className="p-4 flex flex-wrap gap-2">
-                        {records.map(r => (
-                          <div key={r.id} className="flex items-center gap-2 bg-gray-100 dark:bg-gray-700 px-3 py-1.5 rounded-full text-sm">
-                            <span className="font-medium text-gray-900 dark:text-white">{r.staff?.full_name}</span>
-                            <span className="text-xs text-gray-500 dark:text-gray-400 capitalize">({r.staff?.role})</span>
-                            <button onClick={() => handleRemove(r.id)} className="text-red-500 hover:text-red-700 ml-1 font-bold">×</button>
-                          </div>
-                        ))}
-                        {records.length === 0 && <span className="text-sm text-gray-400 italic">No staff assigned.</span>}
-                      </div>
+                      <button
+                        onClick={() => { 
+                          setTargetWeekStart(weekStart); 
+                          setModalMode('addToSpecificWeek'); 
+                          setIsModalOpen(true); 
+                        }}
+                        className="text-sm text-blue-600 dark:text-blue-400 hover:underline font-medium"
+                      >
+                        + Add Staff
+                      </button>
                     </div>
-                  );
-                })}
-              </>
+                    <div className="p-4 flex flex-wrap gap-2">
+                      {records.map(r => (
+                        <div key={r.id} className="flex items-center gap-2 bg-gray-100 dark:bg-gray-700 px-3 py-1.5 rounded-full text-sm">
+                          <span className="font-medium text-gray-900 dark:text-white">{r.staff?.full_name}</span>
+                          <button onClick={() => handleRemove(r.id)} className="text-red-500 hover:text-red-700 ml-1 font-bold">×</button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })
             )}
           </div>
         )}
       </div>
 
-      {/* Universal Modal for Add & Bulk Generate */}
       <Modal
-        isOpen={modalState.isOpen}
-        title={modalState.title}
-        message={modalState.message}
-        confirmText={modalState.action === 'add' ? 'Assign to Week' : 'Generate Roster'}
-        onCancel={() => setModalState({ ...modalState, isOpen: false })}
-        onConfirm={modalState.action === 'add' ? handleAddStaff : handleBulkGenerate}
-        requireInput={false}
-        isDanger={false}
+        isOpen={isModalOpen}
+        title={
+          modalMode === 'bulk' ? 'Generate Term Roster' : 
+          modalMode === 'manualWeek' ? 'Add Single Week' : 
+          `Add Staff to Week`
+        }
+        message={
+          modalMode === 'bulk' ? 'Fairly distribute duty weeks. Note: This will overwrite existing weeks starting from the selected date.' : 
+          modalMode === 'manualWeek' ? 'Assign a specific teacher to a specific week.' : 
+          `Add a teacher to the week of ${formatDateDisplay(targetWeekStart)}.`
+        }
+        confirmText={
+          modalMode === 'bulk' ? 'Generate Roster' : 
+          'Add Teacher'
+        }
+        onCancel={() => { setIsModalOpen(false); setSelectedStaffId(''); }}
+        onConfirm={
+          modalMode === 'bulk' ? handleBulkGenerate : 
+          modalMode === 'manualWeek' ? handleManualWeek : 
+          handleAddToSpecificWeek
+        }
+        isDanger={modalMode === 'bulk'} // Make the button red for Bulk to warn it overwrites
       >
-        {modalState.action === 'add' && (
-          <select 
-            value={selectedStaffId} 
-            onChange={(e) => setSelectedStaffId(e.target.value)}
-            className="w-full mt-2 rounded border border-gray-300 dark:border-gray-600 px-3 py-2 text-gray-900 dark:text-white dark:bg-gray-700"
-          >
-            <option value="">-- Select Teacher --</option>
-            {staffList.filter(s => s.role === 'teacher').map(s => (
-              <option key={s.id} value={s.id}>{s.full_name}</option>
-            ))}
-          </select>
-        )}
+        <div className="space-y-4 mt-2">
+          
+          {modalMode === 'bulk' && (
+            <>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Start Date (Monday)</label>
+                <input type="date" value={bulkStartDate} onChange={(e) => setBulkStartDate(e.target.value)} className="w-full rounded border border-gray-300 dark:border-gray-600 px-3 py-2 text-gray-900 dark:text-white dark:bg-gray-700" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Number of Weeks in Term</label>
+                <input type="number" min="1" max="20" value={bulkWeeks} onChange={(e) => setBulkWeeks(Number(e.target.value))} className="w-full rounded border border-gray-300 dark:border-gray-600 px-3 py-2 text-gray-900 dark:text-white dark:bg-gray-700" />
+              </div>
+            </>
+          )}
+
+          {modalMode === 'manualWeek' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Select Date (Any day in the week)</label>
+              <input type="date" value={manualDate} onChange={(e) => setManualDate(e.target.value)} className="w-full rounded border border-gray-300 dark:border-gray-600 px-3 py-2 text-gray-900 dark:text-white dark:bg-gray-700" />
+            </div>
+          )}
+
+          {(modalMode === 'manualWeek' || modalMode === 'addToSpecificWeek') && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Select Teacher</label>
+              <select value={selectedStaffId} onChange={(e) => setSelectedStaffId(e.target.value)} className="w-full rounded border border-gray-300 dark:border-gray-600 px-3 py-2 text-gray-900 dark:text-white dark:bg-gray-700">
+                <option value="">-- Select --</option>
+                {staffList.filter(s => s.role === 'teacher').map(s => (<option key={s.id} value={s.id}>{s.full_name}</option>))}
+              </select>
+            </div>
+          )}
+
+        </div>
       </Modal>
 
     </main>

@@ -23,6 +23,8 @@ type ReportRow = {
   nurse: { full_name: string } | null;
 };
 
+type LearnerPreview = { id: string; full_name: string; class_stream: string; };
+
 export default function AdminDashboard() {
   const router = useRouter();
   const supabase = createClient();
@@ -32,23 +34,24 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
 
-  // Modal State
-  const [actionModal, setActionModal] = useState<{ 
-    isOpen: boolean; 
-    passId: string | null; 
-    name: string; 
-    action: 'release' | 'reject' | null 
-  }>({
+  const [actionModal, setActionModal] = useState<{ isOpen: boolean; passId: string | null; name: string; action: 'release' | 'reject' | null }>({
     isOpen: false, passId: null, name: '', action: null
   });
+
+  const [isSendModalOpen, setIsSendModalOpen] = useState(false);
+  const [admNo, setAdmNo] = useState('');
+  const [learnerPreview, setLearnerPreview] = useState<LearnerPreview | null>(null);
+  const [isSearchingLearner, setIsSearchingLearner] = useState(false);
+  const [reason, setReason] = useState('headache');
+  const [note, setNote] = useState('');
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
 
   async function fetchReport() {
     if (!date) return;
     setLoading(true);
-    const start = new Date(date);
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(date);
-    end.setHours(23, 59, 59, 999);
+    const start = new Date(date); start.setHours(0, 0, 0, 0);
+    const end = new Date(date); end.setHours(23, 59, 59, 999);
 
     const { data: passes, error } = await supabase
       .from('passes')
@@ -62,152 +65,86 @@ export default function AdminDashboard() {
       .lte('sent_at', end.toISOString())
       .order('sent_at', { ascending: false });
 
-    if (!error && passes) {
-      setData(passes as unknown as ReportRow[]);
-    }
+    if (!error && passes) setData(passes as unknown as ReportRow[]);
     setLoading(false);
   }
 
   useEffect(() => {
-    if (!date) {
-      setDate(new Date().toISOString().split('T')[0]);
-    }
+    if (!date) setDate(new Date().toISOString().split('T')[0]);
   }, [date]);
 
   useEffect(() => {
     if (!date) return;
-
     fetchReport();
-
-    const channel = supabase
-      .channel('admin-updates')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'passes' }, () => {
-        fetchReport();
-      })
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    const channel = supabase.channel('admin-updates').on('postgres_changes', { event: '*', schema: 'public', table: 'passes' }, () => { fetchReport(); }).subscribe();
+    return () => { supabase.removeChannel(channel); };
   }, [date]);
 
-  function handleActionClick(passId: string, name: string, action: 'release' | 'reject') {
-    setActionModal({ isOpen: true, passId, name, action });
+  useEffect(() => {
+    if (!admNo.trim()) { setLearnerPreview(null); return; }
+    const delayDebounceFn = setTimeout(async () => {
+      setIsSearchingLearner(true);
+      const { data } = await supabase.from('learners').select('id, full_name, class_stream').eq('admission_no', admNo.trim()).eq('is_active', true).single();
+      if (data) { setLearnerPreview(data); setSendError(null); } else { setLearnerPreview(null); }
+      setIsSearchingLearner(false);
+    }, 500);
+    return () => clearTimeout(delayDebounceFn);
+  }, [admNo]);
+
+  async function handleAdminSend() {
+    if (!learnerPreview) return;
+    setSending(true); setSendError(null);
+    const { error } = await supabase.rpc('create_pass', { p_learner_id: learnerPreview.id, p_reason_category: reason, p_reason_note: note || null });
+    if (error) setSendError(error.message);
+    else { setIsSendModalOpen(false); setAdmNo(''); setNote(''); setLearnerPreview(null); fetchReport(); }
+    setSending(false);
   }
+
+  function handleActionClick(passId: string, name: string, action: 'release' | 'reject') { setActionModal({ isOpen: true, passId, name, action }); }
 
   async function handleConfirmAction() {
     if (!actionModal.passId || !actionModal.action) return;
-    
     const rpcName = actionModal.action === 'release' ? 'release_learner' : 'reject_send_home';
     const { error } = await supabase.rpc(rpcName, { p_pass_id: actionModal.passId });
-    
-    if (error) {
-      alert(error.message);
-    } else {
-      setActionModal({ isOpen: false, passId: null, name: '', action: null });
-      fetchReport(); 
-    }
+    if (error) alert(error.message);
+    else { setActionModal({ isOpen: false, passId: null, name: '', action: null }); fetchReport(); }
   }
 
-  async function handleLogout() {
-    await supabase.auth.signOut();
-    window.location.href = '/login';
-  }
-
-  const formatTime = (iso: string | null) => {
-    if (!iso) return '-';
-    return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  };
+  async function handleLogout() { await supabase.auth.signOut(); window.location.href = '/login'; }
+  const formatTime = (iso: string | null) => iso ? new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '-';
 
   const filteredData = data.filter((p) => {
     const term = search.toLowerCase();
-    const nameMatch = (p.learners?.full_name || '').toLowerCase().includes(term);
-    const admMatch = (p.learners?.admission_no || '').toLowerCase().includes(term);
-    return nameMatch || admMatch;
+    return (p.learners?.full_name || '').toLowerCase().includes(term) || (p.learners?.admission_no || '').toLowerCase().includes(term);
   });
 
   const getStatusBadge = (p: ReportRow, isMobile: boolean = false) => {
     const baseClass = "inline-block px-2 py-1 rounded text-xs font-medium";
-    let colorClass = "";
-    let text = p.status;
-
+    let colorClass = ""; let text = p.status;
     if (p.status === 'pending') colorClass = 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/50 dark:text-yellow-200';
     else if (p.status === 'acknowledged') colorClass = 'bg-blue-100 text-blue-800 dark:bg-blue-900/50 dark:text-blue-200';
     else if (p.status === 'observation') colorClass = 'bg-orange-100 text-orange-800 dark:bg-orange-900/50 dark:text-orange-200';
     else if (p.status === 'returned') colorClass = 'bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-200';
-    else if (p.status === 'sent_home' && !p.admin_released && !p.admin_rejected) {
-      colorClass = 'bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-200 animate-pulse';
-      text = 'ACTION: Send Home';
-    }
-    else if (p.status === 'sent_home' && p.admin_released) {
-      colorClass = 'bg-purple-100 text-purple-800 dark:bg-purple-900/50 dark:text-purple-200';
-      text = 'Released';
-    }
+    else if (p.status === 'sent_home' && !p.admin_released && !p.admin_rejected) { colorClass = 'bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-200 animate-pulse'; text = 'ACTION: Send Home'; }
+    else if (p.status === 'sent_home' && p.admin_released) { colorClass = 'bg-purple-100 text-purple-800 dark:bg-purple-900/50 dark:text-purple-200'; text = 'Released'; }
     else colorClass = 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200';
-
     return <span className={`${baseClass} ${colorClass} ${isMobile ? 'text-sm' : ''}`}>{text}</span>;
-  };
-
-  const downloadCSV = () => {
-    const headers = ['Admission No', 'Learner', 'Class', 'Reason', 'Status', 'Sent At', 'Acknowledged At', 'Closed At', 'Teacher', 'Nurse'];
-    const rows = filteredData.map((p) => [
-      p.learners?.admission_no || '',
-      p.learners?.full_name || '',
-      p.learners?.class_stream || '',
-      p.reason_category,
-      p.status === 'sent_home' && !p.admin_released && !p.admin_rejected ? 'ACTION: Send Home' : p.status,
-      formatTime(p.sent_at),
-      formatTime(p.acknowledged_at),
-      formatTime(p.closed_at),
-      p.teacher?.full_name || '',
-      p.nurse?.full_name || '',
-    ]);
-    const csvContent = [
-      headers.join(','),
-      ...rows.map((row) => row.map((cell) => `"${cell}"`).join(','))
-    ].join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute('download', `san_report_${date}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
   };
 
   const downloadPDF = () => {
     const doc = new jsPDF();
-    doc.setFontSize(18);
-    doc.text('Kenya High School', 14, 22);
-    doc.setFontSize(12);
-    doc.text(`Sanatorium Daily Report - ${date}`, 14, 30);
-    if (search) {
-      doc.setFontSize(10);
-      doc.text(`Filtered by: "${search}"`, 14, 36);
-    }
+    doc.setFontSize(18); doc.text('Kenya High School', 14, 22);
+    doc.setFontSize(12); doc.text(`Sanatorium Daily Report - ${date}`, 14, 30);
+    if (search) { doc.setFontSize(10); doc.text(`Filtered by: "${search}"`, 14, 36); }
     
     const tableColumn = ["Learner", "Class", "Reason", "Status", "Sent", "Ack", "Closed", "Teacher", "Nurse"];
     const tableRows = filteredData.map(p => [
-      `${p.learners?.full_name}\n(${p.learners?.admission_no})`,
-      p.learners?.class_stream || '',
-      p.reason_category,
+      `${p.learners?.full_name}\n(${p.learners?.admission_no})`, p.learners?.class_stream || '', p.reason_category,
       p.status === 'sent_home' && !p.admin_released && !p.admin_rejected ? 'ACTION: Send Home' : p.status,
-      formatTime(p.sent_at),
-      formatTime(p.acknowledged_at),
-      formatTime(p.closed_at),
-      p.teacher?.full_name || '',
-      p.nurse?.full_name || '-'
+      formatTime(p.sent_at), formatTime(p.acknowledged_at), formatTime(p.closed_at), p.teacher?.full_name || '', p.nurse?.full_name || '-'
     ]);
 
-    autoTable(doc, {
-      head: [tableColumn],
-      body: tableRows,
-      startY: search ? 42 : 35,
-      styles: { fontSize: 9 },
-      headStyles: { fillColor: [41, 128, 185] },
-    });
-
+    autoTable(doc, { head: [tableColumn], body: tableRows, startY: search ? 42 : 35, styles: { fontSize: 9 }, headStyles: { fillColor: [41, 128, 185] } });
     doc.save(`san_report_${date}.pdf`);
   };
 
@@ -215,103 +152,53 @@ export default function AdminDashboard() {
     <main className="min-h-screen bg-gray-50 dark:bg-gray-900 p-4 sm:p-6 transition-colors">
       <div className="max-w-6xl mx-auto space-y-6">
         
-        {/* Header */}
         <div className="flex flex-col sm:flex-row justify-between sm:items-center bg-white dark:bg-gray-800 p-4 rounded shadow transition-colors gap-4">
           <div>
             <h1 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-white">Admin Report</h1>
             <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400">Kenya High School — Sanatorium Log</p>
           </div>
           <div className="flex flex-wrap items-center gap-3 sm:gap-4">
-
-            <Link href="/admin/duty" className="text-sm text-blue-600 dark:text-blue-400 hover:underline">
-              Duty Roster
-            </Link>
-            <Link href="/admin/anomalies" className="text-sm text-purple-600 dark:text-purple-400 hover:underline font-medium">
-              Anomalies
-            </Link>
-            <Link href="/admin/audit" className="text-sm text-blue-600 dark:text-blue-400 hover:underline">
-              Audit Log
-            </Link>
-
+            <Link href="/admin/duty" className="text-sm text-blue-600 dark:text-blue-400 hover:underline">Duty Roster</Link>
+            <Link href="/admin/anomalies" className="text-sm text-purple-600 dark:text-purple-400 hover:underline font-medium">Anomalies</Link>
+            <Link href="/admin/audit" className="text-sm text-blue-600 dark:text-blue-400 hover:underline">Audit Log</Link>
             <ThemeToggle />
-            <button onClick={handleLogout} className="text-sm text-red-600 dark:text-red-400 hover:underline">
-              Log out
-            </button>
+            <button onClick={handleLogout} className="text-sm text-red-600 dark:text-red-400 hover:underline">Log out</button>
           </div>
         </div>
 
         <div className="bg-white dark:bg-gray-800 p-4 sm:p-6 rounded shadow transition-colors">
-          
-          {/* Controls */}
           <div className="flex flex-col lg:flex-row justify-between items-start lg:items-end gap-4 mb-6">
             <div className="flex flex-col sm:flex-row gap-4 w-full lg:w-auto">
               <div className="w-full sm:w-auto">
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Select Date</label>
-                <input
-                  type="date"
-                  value={date}
-                  onChange={(e) => setDate(e.target.value)}
-                  className="w-full sm:w-auto rounded border border-gray-300 dark:border-gray-600 px-3 py-2 text-gray-900 dark:text-white dark:bg-gray-700"
-                />
+                <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-full sm:w-auto rounded border border-gray-300 dark:border-gray-600 px-3 py-2 text-gray-900 dark:text-white dark:bg-gray-700" />
               </div>
               <div className="w-full sm:w-auto">
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Search Learner</label>
-                <input
-                  type="text"
-                  placeholder="Name or Adm No..."
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  className="w-full sm:w-auto rounded border border-gray-300 dark:border-gray-600 px-3 py-2 text-gray-900 dark:text-white dark:bg-gray-700 min-w-[200px]"
-                />
+                <input type="text" placeholder="Name or Adm No..." value={search} onChange={(e) => setSearch(e.target.value)} className="w-full sm:w-auto rounded border border-gray-300 dark:border-gray-600 px-3 py-2 text-gray-900 dark:text-white dark:bg-gray-700 min-w-[200px]" />
               </div>
             </div>
             
-            <div className="flex gap-2 w-full lg:w-auto">
-              <button
-                onClick={downloadCSV}
-                disabled={filteredData.length === 0}
-                className="flex-1 lg:flex-none bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700 disabled:opacity-50 transition-colors"
-              >
-                Download CSV
-              </button>
-              <button
-                onClick={downloadPDF}
-                disabled={filteredData.length === 0}
-                className="flex-1 lg:flex-none bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 disabled:opacity-50 transition-colors"
-              >
-                Download PDF
-              </button>
+            <div className="flex flex-wrap gap-2 w-full lg:w-auto">
+              <button onClick={() => setIsSendModalOpen(true)} className="flex-1 lg:flex-none bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors font-medium">+ Send Learner</button>
+              <button onClick={downloadPDF} disabled={filteredData.length === 0} className="flex-1 lg:flex-none bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 disabled:opacity-50 transition-colors">Download PDF Report</button>
             </div>
           </div>
 
-          {/* Action Center */}
           {filteredData.filter(p => p.status === 'sent_home' && !p.admin_released && !p.admin_rejected).length > 0 && (
             <div className="mb-6 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
-              <h3 className="text-red-800 dark:text-red-400 font-bold mb-3 flex items-center gap-2">
-                ⚠️ Action Required: Learners Awaiting Release
-              </h3>
+              <h3 className="text-red-800 dark:text-red-400 font-bold mb-3 flex items-center gap-2">⚠️ Action Required: Learners Awaiting Release</h3>
               <ul className="space-y-2">
                 {filteredData.filter(p => p.status === 'sent_home' && !p.admin_released && !p.admin_rejected).map(p => (
                   <li key={p.id} className="flex flex-col xl:flex-row justify-between xl:items-center bg-white dark:bg-gray-800 p-3 rounded shadow-sm border border-red-100 dark:border-gray-700 gap-3">
                     <div>
                       <span className="font-bold text-gray-900 dark:text-white">{p.learners?.full_name}</span>
                       <span className="text-gray-500 dark:text-gray-400 ml-2">({p.learners?.admission_no})</span>
-                      <span className="hidden sm:inline text-gray-400 mx-2">•</span>
-                      <span className="block sm:inline text-gray-600 dark:text-gray-300 text-sm mt-1 sm:mt-0">Recommended at {formatTime(p.closed_at)}</span>
+                      <span className="block sm:inline text-gray-600 dark:text-gray-300 text-sm mt-1 sm:mt-0 sm:ml-4">Recommended at {formatTime(p.closed_at)}</span>
                     </div>
                     <div className="flex gap-2 w-full xl:w-auto">
-                      <button
-                        onClick={() => handleActionClick(p.id, p.learners?.full_name || 'Learner', 'reject')}
-                        className="flex-1 xl:flex-none bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 px-4 py-2 rounded hover:bg-gray-300 dark:hover:bg-gray-600 text-sm font-medium transition-colors"
-                      >
-                        Reject (Keep in School)
-                      </button>
-                      <button
-                        onClick={() => handleActionClick(p.id, p.learners?.full_name || 'Learner', 'release')}
-                        className="flex-1 xl:flex-none bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 text-sm font-medium transition-colors"
-                      >
-                        Release (Send Home)
-                      </button>
+                      <button onClick={() => handleActionClick(p.id, p.learners?.full_name || 'Learner', 'reject')} className="flex-1 xl:flex-none bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 px-4 py-2 rounded hover:bg-gray-300 dark:hover:bg-gray-600 text-sm font-medium transition-colors">Reject (Keep in School)</button>
+                      <button onClick={() => handleActionClick(p.id, p.learners?.full_name || 'Learner', 'release')} className="flex-1 xl:flex-none bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 text-sm font-medium transition-colors">Release (Send Home)</button>
                     </div>
                   </li>
                 ))}
@@ -319,36 +206,22 @@ export default function AdminDashboard() {
             </div>
           )}
 
-          {/* Data */}
-          {loading ? (
-            <p className="text-gray-500 dark:text-gray-400">Loading report...</p>
-          ) : filteredData.length === 0 ? (
-            <p className="text-gray-500 dark:text-gray-400">No passes found matching your criteria.</p>
-          ) : (
+          {loading ? (<p className="text-gray-500 dark:text-gray-400">Loading report...</p>) : filteredData.length === 0 ? (<p className="text-gray-500 dark:text-gray-400">No passes found matching your criteria.</p>) : (
             <>
-              {/* Desktop Table */}
               <div className="hidden md:block overflow-x-auto">
                 <table className="w-full text-left border-collapse text-sm">
                   <thead>
                     <tr className="bg-gray-100 dark:bg-gray-900 text-gray-700 dark:text-gray-300">
-                      <th className="p-3 border-b dark:border-gray-700">Learner</th>
-                      <th className="p-3 border-b dark:border-gray-700">Class</th>
-                      <th className="p-3 border-b dark:border-gray-700">Reason</th>
-                      <th className="p-3 border-b dark:border-gray-700">Status</th>
-                      <th className="p-3 border-b dark:border-gray-700">Sent</th>
-                      <th className="p-3 border-b dark:border-gray-700">Ack</th>
-                      <th className="p-3 border-b dark:border-gray-700">Closed</th>
-                      <th className="p-3 border-b dark:border-gray-700">Teacher</th>
+                      <th className="p-3 border-b dark:border-gray-700">Learner</th><th className="p-3 border-b dark:border-gray-700">Class</th>
+                      <th className="p-3 border-b dark:border-gray-700">Reason</th><th className="p-3 border-b dark:border-gray-700">Status</th>
+                      <th className="p-3 border-b dark:border-gray-700">Sent</th><th className="p-3 border-b dark:border-gray-700">Ack</th>
+                      <th className="p-3 border-b dark:border-gray-700">Closed</th><th className="p-3 border-b dark:border-gray-700">Teacher</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filteredData.map((p) => (
                       <tr key={p.id} className="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50">
-                        <td className="p-3">
-                          <span className="font-medium text-gray-900 dark:text-white">{p.learners?.full_name}</span>
-                          <br/>
-                          <span className="text-xs text-gray-500 dark:text-gray-400">{p.learners?.admission_no}</span>
-                        </td>
+                        <td className="p-3"><span className="font-medium text-gray-900 dark:text-white">{p.learners?.full_name}</span><br/><span className="text-xs text-gray-500 dark:text-gray-400">{p.learners?.admission_no}</span></td>
                         <td className="p-3 text-gray-600 dark:text-gray-300">{p.learners?.class_stream}</td>
                         <td className="p-3 text-gray-600 dark:text-gray-300 capitalize">{p.reason_category}</td>
                         <td className="p-3">{getStatusBadge(p)}</td>
@@ -361,8 +234,6 @@ export default function AdminDashboard() {
                   </tbody>
                 </table>
               </div>
-
-              {/* Mobile Cards */}
               <div className="md:hidden space-y-4">
                 {filteredData.map((p) => (
                   <div key={p.id} className="border border-gray-200 dark:border-gray-700 p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 shadow-sm">
@@ -371,30 +242,13 @@ export default function AdminDashboard() {
                         <p className="font-bold text-gray-900 dark:text-white text-lg leading-tight">{p.learners?.full_name}</p>
                         <p className="text-gray-500 dark:text-gray-400 text-sm">{p.learners?.admission_no} • {p.learners?.class_stream}</p>
                       </div>
-                      <div className="ml-2">
-                        {getStatusBadge(p, true)}
-                      </div>
+                      <div className="ml-2">{getStatusBadge(p, true)}</div>
                     </div>
-                    
                     <div className="grid grid-cols-2 gap-y-2 text-sm mt-3 mb-3 border-t border-b border-gray-200 dark:border-gray-700 py-3">
-                      <div>
-                        <span className="text-gray-500 dark:text-gray-400 text-xs block">Reason</span>
-                        <span className="text-gray-900 dark:text-gray-200 capitalize font-medium">{p.reason_category}</span>
-                      </div>
-                      <div>
-                        <span className="text-gray-500 dark:text-gray-400 text-xs block">Teacher</span>
-                        <span className="text-gray-900 dark:text-gray-200 font-medium">{p.teacher?.full_name}</span>
-                      </div>
-                      <div>
-                        <span className="text-gray-500 dark:text-gray-400 text-xs block">Sent</span>
-                        <span className="text-gray-900 dark:text-gray-200">{formatTime(p.sent_at)}</span>
-                      </div>
-                      <div>
-                        <span className="text-gray-500 dark:text-gray-400 text-xs block">Ack / Closed</span>
-                        <span className="text-gray-900 dark:text-gray-200">
-                          {formatTime(p.acknowledged_at)} / {formatTime(p.closed_at)}
-                        </span>
-                      </div>
+                      <div><span className="text-gray-500 dark:text-gray-400 text-xs block">Reason</span><span className="text-gray-900 dark:text-gray-200 capitalize font-medium">{p.reason_category}</span></div>
+                      <div><span className="text-gray-500 dark:text-gray-400 text-xs block">Teacher</span><span className="text-gray-900 dark:text-gray-200 font-medium">{p.teacher?.full_name}</span></div>
+                      <div><span className="text-gray-500 dark:text-gray-400 text-xs block">Sent</span><span className="text-gray-900 dark:text-gray-200">{formatTime(p.sent_at)}</span></div>
+                      <div><span className="text-gray-500 dark:text-gray-400 text-xs block">Ack / Closed</span><span className="text-gray-900 dark:text-gray-200">{formatTime(p.acknowledged_at)} / {formatTime(p.closed_at)}</span></div>
                     </div>
                   </div>
                 ))}
@@ -404,20 +258,30 @@ export default function AdminDashboard() {
         </div>
       </div>
 
-      {/* The Sleek Modal (Handles both Release and Reject) */}
-      <Modal
-        isOpen={actionModal.isOpen}
-        title={actionModal.action === 'release' ? 'Release Learner' : 'Reject Send Home'}
-        message={
-          actionModal.action === 'release' 
-            ? `Are you sure you want to release ${actionModal.name}? This confirms that transport/home arrangements have been made.`
-            : `Are you sure you want to reject the nurse's recommendation for ${actionModal.name}? The learner will be kept in school and marked as Returned to Class.`
-        }
-        confirmText={actionModal.action === 'release' ? 'Yes, Release Learner' : 'Yes, Reject'}
-        isDanger={actionModal.action === 'release'} // Red button for release, blue for reject
-        onCancel={() => setActionModal({ isOpen: false, passId: null, name: '', action: null })}
-        onConfirm={handleConfirmAction}
-      />
+      <Modal isOpen={actionModal.isOpen} title={actionModal.action === 'release' ? 'Release Learner' : 'Reject Send Home'} message={actionModal.action === 'release' ? `Are you sure you want to release ${actionModal.name}? This confirms that transport/home arrangements have been made.` : `Are you sure you want to reject the nurse's recommendation for ${actionModal.name}? The learner will be kept in school and marked as Returned to Class.`} confirmText={actionModal.action === 'release' ? 'Yes, Release Learner' : 'Yes, Reject'} isDanger={actionModal.action === 'release'} onCancel={() => setActionModal({ isOpen: false, passId: null, name: '', action: null })} onConfirm={handleConfirmAction} />
+      
+      <Modal isOpen={isSendModalOpen} title="Send Learner to San" message="As an Admin, you can bypass the duty roster in case of an emergency." confirmText={sending ? 'Sending...' : 'Send to San'} onCancel={() => setIsSendModalOpen(false)} onConfirm={handleAdminSend} isDanger={false}>
+        <div className="space-y-4 mt-2">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Admission Number</label>
+            <input type="text" placeholder="e.g. 20444" value={admNo} onChange={(e) => setAdmNo(e.target.value)} className="mt-1 w-full rounded border border-gray-300 dark:border-gray-600 px-3 py-2 text-gray-900 dark:text-white dark:bg-gray-700 text-lg" />
+            {isSearchingLearner && <p className="text-xs text-blue-500 mt-1">Searching...</p>}
+            {learnerPreview && (<div className="mt-2 p-2 bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800 rounded text-sm"><span className="font-bold text-green-800 dark:text-green-400">✅ {learnerPreview.full_name}</span><span className="text-green-700 dark:text-green-300 ml-2">({learnerPreview.class_stream})</span></div>)}
+            {!isSearchingLearner && admNo.length > 2 && !learnerPreview && (<div className="mt-2 p-2 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded text-sm text-red-700 dark:text-red-400">❌ No active student found.</div>)}
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Reason</label>
+            <select value={reason} onChange={(e) => setReason(e.target.value)} className="mt-1 w-full rounded border border-gray-300 dark:border-gray-600 px-3 py-2 text-gray-900 dark:text-white dark:bg-gray-700">
+              <option value="headache">Headache</option><option value="stomach">Stomach ache</option><option value="injury">Injury</option><option value="fever">Fever</option><option value="other">Other</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Note (optional)</label>
+            <input type="text" maxLength={140} value={note} onChange={(e) => setNote(e.target.value)} className="mt-1 w-full rounded border border-gray-300 dark:border-gray-600 px-3 py-2 text-gray-900 dark:text-white dark:bg-gray-700" placeholder="Brief context..." />
+          </div>
+          {sendError && <p className="text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/30 p-2 rounded">{sendError}</p>}
+        </div>
+      </Modal>
     </main>
   );
 }
