@@ -169,6 +169,11 @@ export default function AdminDashboard() {
             <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 capitalize">{staff?.role || 'Admin'} Dashboard — Kenya High School</p>
           </div>
           <div className="flex flex-wrap items-center gap-3 sm:gap-4">
+
+
+	 <Link href="/admin/staff" className="text-sm text-blue-600 dark:text-blue-400 hover:underline font-medium">
+              Manage Staff
+            </Link>
             <Link href="/admin/duty" className="text-sm text-blue-600 dark:text-blue-400 hover:underline">Duty Roster</Link>
             <Link href="/admin/anomalies" className="text-sm text-purple-600 dark:text-purple-400 hover:underline font-medium">Anomalies</Link>
             <Link href="/admin/audit" className="text-sm text-blue-600 dark:text-blue-400 hover:underline">Audit Log</Link>
