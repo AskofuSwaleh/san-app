@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import ThemeToggle from '@/components/ThemeToggle';
 import Modal from '@/components/Modal';
+import { useUser } from '@/hooks/useUser';
 
 type Pass = {
   id: string;
@@ -22,6 +23,7 @@ type Pass = {
 export default function NurseDashboard() {
   const router = useRouter();
   const supabase = createClient();
+  const { staff, loading: userLoading } = useUser();
 
   const [incoming, setIncoming] = useState<Pass[]>([]);
   const [inSan, setInSan] = useState<Pass[]>([]);
@@ -35,8 +37,8 @@ export default function NurseDashboard() {
     isOpen: false, passId: null as string | null, outcome: null as 'returned' | 'sent_home' | 'observation' | null, title: '', message: '', confirmText: '', isDanger: false 
   });
 
-  // State for Return All Modal
   const [isReturnAllModalOpen, setIsReturnAllModalOpen] = useState(false);
+  const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
 
   async function fetchData() {
     if (!historyDate) return;
@@ -125,25 +127,28 @@ export default function NurseDashboard() {
     else setIsReturnAllModalOpen(false);
   }
 
-  async function handleLogout() {
+  async function confirmLogout() {
     await supabase.auth.signOut();
     window.location.href = '/login';
   }
 
   const formatTime = (iso: string | null) => iso ? new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '-';
 
+  if (userLoading || loading) return <div className="p-10 text-center text-gray-500 dark:text-gray-400">Loading dashboard...</div>;
+
   return (
     <main className="min-h-screen bg-gray-50 dark:bg-gray-900 p-4 sm:p-6 transition-colors">
       <div className="max-w-5xl mx-auto space-y-6">
         
+        {/* PROFESSIONAL HEADER */}
         <div className="flex justify-between items-center bg-white dark:bg-gray-800 p-4 rounded shadow transition-colors">
           <div>
-            <h1 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-white">Sanatorium</h1>
-            <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400">Kenya High School</p>
+            <h1 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-white">Welcome, {staff?.full_name || 'Nurse'}</h1>
+            <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 capitalize">{staff?.role || 'Nurse'} Dashboard — Kenya High School</p>
           </div>
           <div className="flex items-center gap-3 sm:gap-4">
             <ThemeToggle />
-            <button onClick={handleLogout} className="text-sm text-red-600 dark:text-red-400 hover:underline">Log out</button>
+            <button onClick={() => setIsLogoutModalOpen(true)} className="text-sm text-red-600 dark:text-red-400 hover:underline">Log out</button>
           </div>
         </div>
 
@@ -184,7 +189,6 @@ export default function NurseDashboard() {
           </div>
 
           <div className="bg-white dark:bg-gray-800 p-4 sm:p-6 rounded shadow border-t-4 border-blue-400 transition-colors">
-            {/* RETURN ALL BUTTON ADDED HERE */}
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
                 In San
@@ -266,6 +270,8 @@ export default function NurseDashboard() {
       <Modal isOpen={modalState.isOpen} title={modalState.title} message={modalState.message} confirmText={modalState.confirmText} isDanger={modalState.isDanger} requireInput={false} inputPlaceholder="Add a note (optional)" onCancel={() => setModalState({ ...modalState, isOpen: false })} onConfirm={handleConfirmClose} />
       
       <Modal isOpen={isReturnAllModalOpen} title="Return All to Class" message="Are you sure you want to return ALL learners currently in the san back to class? This will close all their passes at once." confirmText="Yes, Return All" isDanger={true} onCancel={() => setIsReturnAllModalOpen(false)} onConfirm={handleReturnAll} />
+
+      <Modal isOpen={isLogoutModalOpen} title="Log Out" message="Are you sure you want to log out of the Sanatorium system?" confirmText="Yes, Log Out" isDanger={true} onCancel={() => setIsLogoutModalOpen(false)} onConfirm={confirmLogout} />
     </main>
   );
 }

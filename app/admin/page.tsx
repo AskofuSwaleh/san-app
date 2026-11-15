@@ -8,6 +8,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import ThemeToggle from '@/components/ThemeToggle';
 import Modal from '@/components/Modal';
+import { useUser } from '@/hooks/useUser';
 
 type ReportRow = {
   id: string;
@@ -28,6 +29,7 @@ type LearnerPreview = { id: string; full_name: string; class_stream: string; };
 export default function AdminDashboard() {
   const router = useRouter();
   const supabase = createClient();
+  const { staff, loading: userLoading } = useUser();
 
   const [date, setDate] = useState('');
   const [data, setData] = useState<ReportRow[]>([]);
@@ -46,6 +48,8 @@ export default function AdminDashboard() {
   const [note, setNote] = useState('');
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+
+  const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
 
   async function fetchReport() {
     if (!date) return;
@@ -110,7 +114,11 @@ export default function AdminDashboard() {
     else { setActionModal({ isOpen: false, passId: null, name: '', action: null }); fetchReport(); }
   }
 
-  async function handleLogout() { await supabase.auth.signOut(); window.location.href = '/login'; }
+  async function confirmLogout() {
+    await supabase.auth.signOut();
+    window.location.href = '/login';
+  }
+
   const formatTime = (iso: string | null) => iso ? new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '-';
 
   const filteredData = data.filter((p) => {
@@ -148,21 +156,24 @@ export default function AdminDashboard() {
     doc.save(`san_report_${date}.pdf`);
   };
 
+  if (userLoading) return <div className="p-10 text-center text-gray-500 dark:text-gray-400">Loading dashboard...</div>;
+
   return (
     <main className="min-h-screen bg-gray-50 dark:bg-gray-900 p-4 sm:p-6 transition-colors">
       <div className="max-w-6xl mx-auto space-y-6">
         
+        {/* PROFESSIONAL HEADER */}
         <div className="flex flex-col sm:flex-row justify-between sm:items-center bg-white dark:bg-gray-800 p-4 rounded shadow transition-colors gap-4">
           <div>
-            <h1 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-white">Admin Report</h1>
-            <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400">Kenya High School — Sanatorium Log</p>
+            <h1 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-white">Welcome, {staff?.full_name || 'Admin'}</h1>
+            <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 capitalize">{staff?.role || 'Admin'} Dashboard — Kenya High School</p>
           </div>
           <div className="flex flex-wrap items-center gap-3 sm:gap-4">
             <Link href="/admin/duty" className="text-sm text-blue-600 dark:text-blue-400 hover:underline">Duty Roster</Link>
             <Link href="/admin/anomalies" className="text-sm text-purple-600 dark:text-purple-400 hover:underline font-medium">Anomalies</Link>
             <Link href="/admin/audit" className="text-sm text-blue-600 dark:text-blue-400 hover:underline">Audit Log</Link>
             <ThemeToggle />
-            <button onClick={handleLogout} className="text-sm text-red-600 dark:text-red-400 hover:underline">Log out</button>
+            <button onClick={() => setIsLogoutModalOpen(true)} className="text-sm text-red-600 dark:text-red-400 hover:underline">Log out</button>
           </div>
         </div>
 
@@ -282,6 +293,8 @@ export default function AdminDashboard() {
           {sendError && <p className="text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/30 p-2 rounded">{sendError}</p>}
         </div>
       </Modal>
+
+      <Modal isOpen={isLogoutModalOpen} title="Log Out" message="Are you sure you want to log out of the Sanatorium system?" confirmText="Yes, Log Out" isDanger={true} onCancel={() => setIsLogoutModalOpen(false)} onConfirm={confirmLogout} />
     </main>
   );
 }
