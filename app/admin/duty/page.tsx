@@ -56,6 +56,12 @@ export default function DutyRosterPage() {
     setBulkStartDate(monday.toISOString().split('T')[0]);
   }, []);
 
+  // Safe date parsing to avoid timezone bugs
+  const safeParseDate = (dateStr: string) => {
+    const [y, m, d] = dateStr.split('-').map(Number);
+    return new Date(y, m - 1, d); 
+  };
+
   const getMonday = (d: Date) => {
     const date = new Date(d);
     const day = date.getDay();
@@ -70,14 +76,13 @@ export default function DutyRosterPage() {
     return `${year}-${month}-${day}`;
   };
 
-  // 1. GENERATE TERM ROSTER (Clears old weeks first!)
+  // 1. GENERATE TERM ROSTER
   async function handleBulkGenerate() {
     const teachers = staffList.filter(s => s.role === 'teacher');
     if (teachers.length < 2) { alert("You need at least 2 teachers."); return; }
     if (!bulkStartDate) { alert("Please select a start date."); return; }
 
-    // First, delete existing weeks from the selected start date onwards
-    // This prevents the "overlapping terms" bug
+    // Delete old weeks starting from the selected date
     const { error: deleteError } = await supabase
       .from('duty_roster')
       .delete()
@@ -89,7 +94,9 @@ export default function DutyRosterPage() {
     }
 
     const weeks: string[] = [];
-    let currentMonday = getMonday(new Date(bulkStartDate));
+    // Use safeParseDate to ensure we don't shift backwards due to UTC
+    let currentMonday = getMonday(safeParseDate(bulkStartDate)); 
+    
     for (let i = 0; i < bulkWeeks; i++) {
       weeks.push(formatLocalDate(currentMonday));
       currentMonday.setDate(currentMonday.getDate() + 7);
@@ -116,8 +123,7 @@ export default function DutyRosterPage() {
   // 2. ADD A SPECIFIC WEEK FROM SCRATCH
   async function handleManualWeek() {
     if (!selectedStaffId || !manualDate) return;
-    const selectedDate = new Date(manualDate);
-    const monday = getMonday(selectedDate);
+    const monday = getMonday(safeParseDate(manualDate));
     
     const { error } = await supabase.from('duty_roster').upsert({
       staff_id: selectedStaffId,
@@ -141,6 +147,15 @@ export default function DutyRosterPage() {
     else { setIsModalOpen(false); setSelectedStaffId(''); setTargetWeekStart(''); fetchData(); }
   }
 
+  // 4. BATCH DELETE A WHOLE WEEK
+  async function handleDeleteWeek(weekStart: string) {
+    if (!confirm('Are you sure you want to clear ALL teachers from this week?')) return;
+    const { error } = await supabase.from('duty_roster').delete().eq('week_start_date', weekStart);
+    if (error) alert(error.message);
+    else fetchData();
+  }
+
+  // 5. REMOVE SINGLE STAFF
   async function handleRemove(id: string) {
     if (!confirm('Remove this teacher from duty?')) return;
     await supabase.from('duty_roster').delete().eq('id', id);
@@ -153,8 +168,8 @@ export default function DutyRosterPage() {
   }
 
   const formatDateDisplay = (dateStr: string) => {
-    const d = new Date(dateStr);
-    const end = new Date(dateStr);
+    const d = safeParseDate(dateStr);
+    const end = safeParseDate(dateStr);
     end.setDate(end.getDate() + 6);
     return `${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} - ${end.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}`;
   };
@@ -204,27 +219,41 @@ export default function DutyRosterPage() {
             ) : (
               sortedWeeks.map((weekStart, index) => {
                 const records = groupedRoster[weekStart];
-                const isCurrentWeek = new Date(weekStart) <= new Date() && new Date(new Date(weekStart).setDate(new Date(weekStart).getDate() + 6)) >= new Date();
+                const currentDate = new Date();
+                const weekStartDate = safeParseDate(weekStart);
+                const weekEndDate = safeParseDate(weekStart);
+                weekEndDate.setDate(weekEndDate.getDate() + 6);
+                
+                const isCurrentWeek = weekStartDate <= currentDate && weekEndDate >= currentDate;
                 
                 return (
                   <div key={weekStart} className={`bg-white dark:bg-gray-800 rounded shadow transition-colors border-l-4 ${isCurrentWeek ? 'border-blue-500' : 'border-gray-300 dark:border-gray-700'}`}>
-                    <div className="p-4 flex justify-between items-center border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50 rounded-t">
+                    <div className="p-4 flex flex-col sm:flex-row justify-between sm:items-center border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50 rounded-t gap-2">
                       <div>
                         <h2 className="font-bold text-gray-900 dark:text-white">
                           Term Week {index + 1}: {formatDateDisplay(weekStart)}
                           {isCurrentWeek && <span className="ml-2 text-xs bg-blue-100 text-blue-800 dark:bg-blue-900/50 dark:text-blue-200 px-2 py-0.5 rounded-full uppercase tracking-wider">Current</span>}
                         </h2>
                       </div>
-                      <button
-                        onClick={() => { 
-                          setTargetWeekStart(weekStart); 
-                          setModalMode('addToSpecificWeek'); 
-                          setIsModalOpen(true); 
-                        }}
-                        className="text-sm text-blue-600 dark:text-blue-400 hover:underline font-medium"
-                      >
-                        + Add Staff
-                      </button>
+                      <div className="flex items-center gap-4">
+                        {/* BATCH DELETE BUTTON */}
+                        <button
+                          onClick={() => handleDeleteWeek(weekStart)}
+                          className="text-sm text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 font-medium"
+                        >
+                          Clear Week
+                        </button>
+                        <button
+                          onClick={() => { 
+                            setTargetWeekStart(weekStart); 
+                            setModalMode('addToSpecificWeek'); 
+                            setIsModalOpen(true); 
+                          }}
+                          className="text-sm text-blue-600 dark:text-blue-400 hover:underline font-medium"
+                        >
+                          + Add Staff
+                        </button>
+                      </div>
                     </div>
                     <div className="p-4 flex flex-wrap gap-2">
                       {records.map(r => (
@@ -264,7 +293,7 @@ export default function DutyRosterPage() {
           modalMode === 'manualWeek' ? handleManualWeek : 
           handleAddToSpecificWeek
         }
-        isDanger={modalMode === 'bulk'} // Make the button red for Bulk to warn it overwrites
+        isDanger={modalMode === 'bulk'} 
       >
         <div className="space-y-4 mt-2">
           
