@@ -31,22 +31,17 @@ export default function NurseDashboard() {
   const [historyDate, setHistoryDate] = useState('');
   const [loading, setLoading] = useState(true);
 
-  // Modal State
   const [modalState, setModalState] = useState({ 
-    isOpen: false, 
-    passId: null as string | null, 
-    outcome: null as 'returned' | 'sent_home' | 'observation' | null, 
-    title: '', 
-    message: '', 
-    confirmText: '', 
-    isDanger: false 
+    isOpen: false, passId: null as string | null, outcome: null as 'returned' | 'sent_home' | 'observation' | null, title: '', message: '', confirmText: '', isDanger: false 
   });
+
+  // State for Return All Modal
+  const [isReturnAllModalOpen, setIsReturnAllModalOpen] = useState(false);
 
   async function fetchData() {
     if (!historyDate) return;
     setLoading(true);
     
-    // 1. Fetch active passes
     const { data: activeData } = await supabase
       .from('passes')
       .select(`
@@ -64,11 +59,8 @@ export default function NurseDashboard() {
       setInSan(acked);
     }
 
-    // 2. Fetch history for the selected date
-    const start = new Date(historyDate);
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(historyDate);
-    end.setHours(23, 59, 59, 999);
+    const start = new Date(historyDate); start.setHours(0, 0, 0, 0);
+    const end = new Date(historyDate); end.setHours(23, 59, 59, 999);
 
     const { data: historyData } = await supabase
       .from('passes')
@@ -82,23 +74,13 @@ export default function NurseDashboard() {
       .lte('sent_at', end.toISOString())
       .order('closed_at', { ascending: false });
 
-    if (historyData) {
-      setHistory(historyData as unknown as Pass[]);
-    }
+    if (historyData) setHistory(historyData as unknown as Pass[]);
 
-    // 3. Fetch 30-day visit counts
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-
-    const { data: countData } = await supabase
-      .from('passes')
-      .select('learner_id')
-      .gte('sent_at', thirtyDaysAgo.toISOString());
-
+    const thirtyDaysAgo = new Date(); thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const { data: countData } = await supabase.from('passes').select('learner_id').gte('sent_at', thirtyDaysAgo.toISOString());
     if (countData) {
       const counts = countData.reduce((acc: Record<string, number>, curr) => {
-        acc[curr.learner_id] = (acc[curr.learner_id] || 0) + 1;
-        return acc;
+        acc[curr.learner_id] = (acc[curr.learner_id] || 0) + 1; return acc;
       }, {});
       setVisitCounts(counts);
     }
@@ -107,25 +89,14 @@ export default function NurseDashboard() {
   }
 
   useEffect(() => {
-    if (!historyDate) {
-      setHistoryDate(new Date().toISOString().split('T')[0]);
-    }
+    if (!historyDate) setHistoryDate(new Date().toISOString().split('T')[0]);
   }, [historyDate]);
 
   useEffect(() => {
     if (!historyDate) return;
     fetchData();
-
-    const channel = supabase
-      .channel('nurse-updates')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'passes' }, () => {
-        fetchData();
-      })
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    const channel = supabase.channel('nurse-updates').on('postgres_changes', { event: '*', schema: 'public', table: 'passes' }, () => { fetchData(); }).subscribe();
+    return () => { supabase.removeChannel(channel); };
   }, [historyDate]);
 
   async function handleAcknowledge(passId: string) {
@@ -133,46 +104,25 @@ export default function NurseDashboard() {
     if (error) alert(error.message);
   }
 
-  // Open the Modal
   function handleCloseClick(passId: string, outcome: 'returned' | 'sent_home' | 'observation') {
-    let title = '';
-    let message = '';
-    let confirmText = '';
-    let isDanger = false;
-
-    if (outcome === 'returned') {
-      title = 'Return to Class';
-      message = 'Are you sure this learner is ready to go back to class?';
-      confirmText = 'Return to Class';
-    } else if (outcome === 'sent_home') {
-      title = 'Recommend Send Home';
-      message = 'This will alert the Admin that this learner needs to be sent home.';
-      confirmText = 'Send Alert to Admin';
-      isDanger = true;
-    } else if (outcome === 'observation') {
-      title = 'Keep for Observation';
-      message = 'The learner will stay in the sanatorium for further observation.';
-      confirmText = 'Start Observation';
-    }
-
+    let title = ''; let message = ''; let confirmText = ''; let isDanger = false;
+    if (outcome === 'returned') { title = 'Return to Class'; message = 'Are you sure this learner is ready to go back to class?'; confirmText = 'Return to Class'; }
+    else if (outcome === 'sent_home') { title = 'Recommend Send Home'; message = 'This will alert the Admin that this learner needs to be sent home.'; confirmText = 'Send Alert to Admin'; isDanger = true; }
+    else if (outcome === 'observation') { title = 'Keep for Observation'; message = 'The learner will stay in the sanatorium for further observation.'; confirmText = 'Start Observation'; }
     setModalState({ isOpen: true, passId, outcome, title, message, confirmText, isDanger });
   }
 
-  // Confirm action in Modal
   async function handleConfirmClose(note?: string) {
     if (!modalState.passId || !modalState.outcome) return;
-    
-    const { error } = await supabase.rpc('close_pass', { 
-      p_pass_id: modalState.passId, 
-      p_outcome: modalState.outcome,
-      p_note: note || null 
-    });
+    const { error } = await supabase.rpc('close_pass', { p_pass_id: modalState.passId, p_outcome: modalState.outcome, p_note: note || null });
+    if (error) alert(error.message);
+    else setModalState({ ...modalState, isOpen: false });
+  }
 
-    if (error) {
-      alert(error.message);
-    } else {
-      setModalState({ ...modalState, isOpen: false });
-    }
+  async function handleReturnAll() {
+    const { error } = await supabase.rpc('return_all_active_passes');
+    if (error) alert(error.message);
+    else setIsReturnAllModalOpen(false);
   }
 
   async function handleLogout() {
@@ -180,16 +130,12 @@ export default function NurseDashboard() {
     window.location.href = '/login';
   }
 
-  const formatTime = (iso: string | null) => {
-    if (!iso) return '-';
-    return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  };
+  const formatTime = (iso: string | null) => iso ? new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '-';
 
   return (
     <main className="min-h-screen bg-gray-50 dark:bg-gray-900 p-4 sm:p-6 transition-colors">
       <div className="max-w-5xl mx-auto space-y-6">
         
-        {/* Header */}
         <div className="flex justify-between items-center bg-white dark:bg-gray-800 p-4 rounded shadow transition-colors">
           <div>
             <h1 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-white">Sanatorium</h1>
@@ -197,15 +143,12 @@ export default function NurseDashboard() {
           </div>
           <div className="flex items-center gap-3 sm:gap-4">
             <ThemeToggle />
-            <button onClick={handleLogout} className="text-sm text-red-600 dark:text-red-400 hover:underline">
-              Log out
-            </button>
+            <button onClick={handleLogout} className="text-sm text-red-600 dark:text-red-400 hover:underline">Log out</button>
           </div>
         </div>
 
         <div className="grid md:grid-cols-2 gap-6">
           
-          {/* Incoming */}
           <div className="bg-white dark:bg-gray-800 p-4 sm:p-6 rounded shadow border-t-4 border-yellow-400 transition-colors">
             <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4 flex justify-between">
               <span>Incoming</span>
@@ -229,33 +172,30 @@ export default function NurseDashboard() {
                         </span>
                       </div>
                     </div>
-                    
                     <div className="mt-2 text-sm bg-white dark:bg-gray-800 p-2 sm:p-3 rounded border border-gray-100 dark:border-gray-700">
                       <p className="text-gray-900 dark:text-gray-200"><span className="font-medium text-gray-700 dark:text-gray-400">Reason:</span> <span className="capitalize">{p.reason_category}</span></p>
                       {p.reason_note && <p className="text-gray-600 dark:text-gray-400 mt-1 italic">"{p.reason_note}"</p>}
-                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-                        Sent by {p.staff?.full_name} at {formatTime(p.sent_at)}
-                      </p>
                     </div>
-
-                    <button
-                      onClick={() => handleAcknowledge(p.id)}
-                      className="mt-3 w-full bg-blue-600 text-white py-2.5 rounded hover:bg-blue-700 transition-colors"
-                    >
-                      Acknowledge Arrival
-                    </button>
+                    <button onClick={() => handleAcknowledge(p.id)} className="mt-3 w-full bg-blue-600 text-white py-2.5 rounded hover:bg-blue-700 transition-colors">Acknowledge Arrival</button>
                   </li>
                 ))}
               </ul>
             )}
           </div>
 
-          {/* In San */}
           <div className="bg-white dark:bg-gray-800 p-4 sm:p-6 rounded shadow border-t-4 border-blue-400 transition-colors">
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4 flex justify-between">
-              <span>In San</span>
-              <span className="bg-blue-100 text-blue-800 dark:bg-blue-900/50 dark:text-blue-200 py-1 px-2 rounded-full text-sm">{inSan.length}</span>
-            </h2>
+            {/* RETURN ALL BUTTON ADDED HERE */}
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
+                In San
+                <span className="bg-blue-100 text-blue-800 dark:bg-blue-900/50 dark:text-blue-200 py-1 px-2 rounded-full text-xs">{inSan.length}</span>
+              </h2>
+              {inSan.length > 0 && (
+                <button onClick={() => setIsReturnAllModalOpen(true)} className="text-xs bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-200 px-3 py-1.5 rounded hover:bg-green-200 transition-colors font-medium">
+                  Return All to Class
+                </button>
+              )}
+            </div>
             
             {inSan.length === 0 ? (
               <p className="text-gray-500 dark:text-gray-400 text-sm">San is empty.</p>
@@ -274,43 +214,18 @@ export default function NurseDashboard() {
                         </span>
                       </div>
                     </div>
-
                     <div className="mt-2 text-sm bg-white dark:bg-gray-800 p-2 sm:p-3 rounded border border-gray-100 dark:border-gray-700">
-                      <p className="text-gray-900 dark:text-gray-200">
-                        <span className="font-medium text-gray-700 dark:text-gray-400">Reason:</span> <span className="capitalize">{p.reason_category}</span>
+                      <p className="text-gray-900 dark:text-gray-200"><span className="font-medium text-gray-700 dark:text-gray-400">Reason:</span> <span className="capitalize">{p.reason_category}</span>
                         {p.status === 'observation' && <span className="ml-2 inline-block bg-orange-100 text-orange-800 text-xs px-2 py-0.5 rounded">Resting</span>}
                       </p>
                     </div>
-                    
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-                      Arrived at {p.acknowledged_at ? formatTime(p.acknowledged_at) : '...'}
-                    </p>
-
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">Arrived at {p.acknowledged_at ? formatTime(p.acknowledged_at) : '...'}</p>
                     <div className="mt-3 flex flex-col gap-2">
                       <div className="flex flex-col sm:flex-row gap-2">
-                        <button
-                          onClick={() => handleCloseClick(p.id, 'returned')}
-                          className="flex-1 bg-green-600 text-white py-2 rounded hover:bg-green-700 transition-colors"
-                        >
-                          Return to Class
-                        </button>
-                        
-                        {p.status === 'acknowledged' && (
-                          <button
-                            onClick={() => handleCloseClick(p.id, 'observation')}
-                            className="flex-1 bg-yellow-600 text-white py-2 rounded hover:bg-yellow-700 transition-colors"
-                          >
-                            Rest (Observe)
-                          </button>
-                        )}
+                        <button onClick={() => handleCloseClick(p.id, 'returned')} className="flex-1 bg-green-600 text-white py-2 rounded hover:bg-green-700 transition-colors">Return to Class</button>
+                        {p.status === 'acknowledged' && (<button onClick={() => handleCloseClick(p.id, 'observation')} className="flex-1 bg-yellow-600 text-white py-2 rounded hover:bg-yellow-700 transition-colors">Rest (Observe)</button>)}
                       </div>
-                      
-                      <button
-                        onClick={() => handleCloseClick(p.id, 'sent_home')}
-                        className="w-full bg-red-600 text-white py-2 rounded hover:bg-red-700 transition-colors text-sm"
-                      >
-                        Recommend Send Home
-                      </button>
+                      <button onClick={() => handleCloseClick(p.id, 'sent_home')} className="w-full bg-red-600 text-white py-2 rounded hover:bg-red-700 transition-colors text-sm">Recommend Send Home</button>
                     </div>
                   </li>
                 ))}
@@ -320,18 +235,11 @@ export default function NurseDashboard() {
 
         </div>
 
-        {/* History Section */}
         <div className="bg-white dark:bg-gray-800 p-4 sm:p-6 rounded shadow mt-6 transition-colors">
           <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2 mb-4">
             <h2 className="text-lg font-semibold text-gray-900 dark:text-white">History</h2>
-            <input
-              type="date"
-              value={historyDate}
-              onChange={(e) => setHistoryDate(e.target.value)}
-              className="w-full sm:w-auto rounded border border-gray-300 dark:border-gray-600 px-3 py-1.5 text-sm text-gray-900 dark:text-white dark:bg-gray-700"
-            />
+            <input type="date" value={historyDate} onChange={(e) => setHistoryDate(e.target.value)} className="w-full sm:w-auto rounded border border-gray-300 dark:border-gray-600 px-3 py-1.5 text-sm text-gray-900 dark:text-white dark:bg-gray-700" />
           </div>
-          
           {history.length === 0 ? (
             <p className="text-gray-500 dark:text-gray-400 text-sm">No completed passes for this date.</p>
           ) : (
@@ -355,18 +263,9 @@ export default function NurseDashboard() {
 
       </div>
 
-      {/* The New Sleek Modal */}
-      <Modal
-        isOpen={modalState.isOpen}
-        title={modalState.title}
-        message={modalState.message}
-        confirmText={modalState.confirmText}
-        isDanger={modalState.isDanger}
-        requireInput={false} 
-        inputPlaceholder="Add a note (optional)"
-        onCancel={() => setModalState({ ...modalState, isOpen: false })}
-        onConfirm={handleConfirmClose}
-      />
+      <Modal isOpen={modalState.isOpen} title={modalState.title} message={modalState.message} confirmText={modalState.confirmText} isDanger={modalState.isDanger} requireInput={false} inputPlaceholder="Add a note (optional)" onCancel={() => setModalState({ ...modalState, isOpen: false })} onConfirm={handleConfirmClose} />
+      
+      <Modal isOpen={isReturnAllModalOpen} title="Return All to Class" message="Are you sure you want to return ALL learners currently in the san back to class? This will close all their passes at once." confirmText="Yes, Return All" isDanger={true} onCancel={() => setIsReturnAllModalOpen(false)} onConfirm={handleReturnAll} />
     </main>
   );
 }

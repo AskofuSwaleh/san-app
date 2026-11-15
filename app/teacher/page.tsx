@@ -29,6 +29,7 @@ function TeacherDashboard() {
 
   const [isOnDuty, setIsOnDuty] = useState(false);
   const [loadingDuty, setLoadingDuty] = useState(true);
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
   
   const [admissionNo, setAdmissionNo] = useState('');
   const [learnerPreview, setLearnerPreview] = useState<LearnerPreview | null>(null);
@@ -44,7 +45,6 @@ function TeacherDashboard() {
   const [todayPasses, setTodayPasses] = useState<Pass[]>([]);
   const [classFilter, setClassFilter] = useState('All');
 
-  // Check Duty Status
   useEffect(() => {
     async function checkDuty() {
       const { data: { user } } = await supabase.auth.getUser();
@@ -53,7 +53,7 @@ function TeacherDashboard() {
       const { data: staff } = await supabase.from('staff').select('id, role').eq('auth_user_id', user.id).single();
       
       if (staff?.role === 'admin' || staff?.role === 'nurse') {
-        setIsOnDuty(true); // Admins and Nurses don't need to be on the roster
+        setIsOnDuty(true); 
       } else if (staff) {
         const { data: isDuty } = await supabase.rpc('is_on_duty', { p_staff_id: staff.id });
         setIsOnDuty(!!isDuty);
@@ -63,22 +63,13 @@ function TeacherDashboard() {
     checkDuty();
   }, []);
 
-  // Live search for the learner
   useEffect(() => {
-    if (!admissionNo.trim()) {
-      setLearnerPreview(null);
-      return;
-    }
+    if (!admissionNo.trim()) { setLearnerPreview(null); return; }
 
     const delayDebounceFn = setTimeout(async () => {
       setIsSearching(true);
       const { data } = await supabase.from('learners').select('id, full_name, class_stream').eq('admission_no', admissionNo.trim()).eq('is_active', true).single();
-      if (data) {
-        setLearnerPreview(data);
-        setError(null);
-      } else {
-        setLearnerPreview(null);
-      }
+      if (data) { setLearnerPreview(data); setError(null); } else { setLearnerPreview(null); }
       setIsSearching(false);
     }, 500);
 
@@ -88,17 +79,27 @@ function TeacherDashboard() {
   useEffect(() => {
     fetchPasses();
 
+    // Listen for ALL updates on passes
     const channel = supabase
       .channel('teacher-updates')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'passes' }, () => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'passes' }, (payload) => {
+        
+        // If a pass was just returned, show a toast!
+        if (payload.eventType === 'UPDATE' && payload.new.status === 'returned' && payload.old.status !== 'returned') {
+          // Find the learner name from our local state
+          const returnedPass = todayPasses.find(p => p.id === payload.new.id);
+          if (returnedPass && returnedPass.learners) {
+            setToastMsg(`🔔 ${returnedPass.learners.full_name} has returned to class.`);
+            setTimeout(() => setToastMsg(null), 5000); // Hide after 5 seconds
+          }
+        }
+        
         fetchPasses();
       })
       .subscribe();
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, []);
+    return () => { supabase.removeChannel(channel); };
+  }, [todayPasses]); // Add todayPasses as dependency so it has the latest names
 
   async function fetchPasses() {
     const start = new Date();
@@ -125,9 +126,7 @@ function TeacherDashboard() {
     e.preventDefault();
     if (!learnerPreview || !isOnDuty) return;
     
-    setLoading(true);
-    setError(null);
-    setSuccessMsg(null);
+    setLoading(true); setError(null); setSuccessMsg(null);
 
     const { error: rpcError } = await supabase.rpc('create_pass', {
       p_learner_id: learnerPreview.id,
@@ -135,16 +134,10 @@ function TeacherDashboard() {
       p_reason_note: note || null,
     });
 
-    if (rpcError) {
-      setError(rpcError.message);
-      setLoading(false);
-      return;
-    }
+    if (rpcError) { setError(rpcError.message); setLoading(false); return; }
 
     setSuccessMsg(`Pass created for ${learnerPreview.full_name}.`);
-    setAdmissionNo('');
-    setNote('');
-    setLearnerPreview(null);
+    setAdmissionNo(''); setNote(''); setLearnerPreview(null);
     fetchPasses(); 
     setLoading(false);
   }
@@ -154,16 +147,21 @@ function TeacherDashboard() {
     window.location.href = '/login';
   }
 
-  // Filter logic for "Currently at San"
   const uniqueClasses = ['All', ...Array.from(new Set(openPasses.map(p => p.learners?.class_stream).filter(Boolean)))];
-  const filteredOpenPasses = classFilter === 'All' 
-    ? openPasses 
-    : openPasses.filter(p => p.learners?.class_stream === classFilter);
+  const filteredOpenPasses = classFilter === 'All' ? openPasses : openPasses.filter(p => p.learners?.class_stream === classFilter);
 
-  if (loadingDuty) return <div className="p-10 text-center">Checking duty roster...</div>;
+  if (loadingDuty) return <div className="p-10 text-center text-gray-500">Checking duty roster...</div>;
 
   return (
-    <main className="min-h-screen bg-gray-50 dark:bg-gray-900 p-4 sm:p-6 transition-colors">
+    <main className="min-h-screen bg-gray-50 dark:bg-gray-900 p-4 sm:p-6 transition-colors relative">
+      
+      {/* Toast Notification */}
+      {toastMsg && (
+        <div className="fixed top-4 right-4 z-50 bg-green-600 text-white px-6 py-3 rounded-lg shadow-xl animate-bounce">
+          {toastMsg}
+        </div>
+      )}
+
       <div className="max-w-4xl mx-auto space-y-6">
         
         <div className="flex justify-between items-center bg-white dark:bg-gray-800 p-4 rounded shadow transition-colors">
@@ -173,62 +171,41 @@ function TeacherDashboard() {
           </div>
           <div className="flex items-center gap-4">
             <ThemeToggle />
-            <button onClick={handleLogout} className="text-sm text-red-600 dark:text-red-400 hover:underline">
-              Log out
-            </button>
+            <button onClick={handleLogout} className="text-sm text-red-600 dark:text-red-400 hover:underline">Log out</button>
           </div>
         </div>
 
         <div className="grid md:grid-cols-2 gap-6">
           
-          {/* New Pass Form */}
           <div className="bg-white dark:bg-gray-800 p-6 rounded shadow transition-colors">
             <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">New Pass</h2>
             
             {!isOnDuty ? (
               <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 p-4 rounded text-sm text-yellow-800 dark:text-yellow-200">
                 <p className="font-bold mb-1">⚠️ You are not on duty this week.</p>
-                <p>Only teachers on the duty roster can send learners to the sanatorium. You can still see who is at the san on the right.</p>
+                <p>Only teachers on the duty roster can send learners to the sanatorium.</p>
               </div>
             ) : (
               <form onSubmit={handleSend} className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Admission Number</label>
                   <input type="text" required placeholder="e.g. 20444" value={admissionNo} onChange={(e) => setAdmissionNo(e.target.value)} className="mt-1 w-full rounded border border-gray-300 dark:border-gray-600 px-3 py-2 text-gray-900 dark:text-white dark:bg-gray-700 text-lg" />
-                  
                   {isSearching && <p className="text-xs text-blue-500 mt-1">Searching...</p>}
-                  {learnerPreview && (
-                    <div className="mt-2 p-2 bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800 rounded text-sm">
-                      <span className="font-bold text-green-800 dark:text-green-400">✅ {learnerPreview.full_name}</span>
-                      <span className="text-green-700 dark:text-green-300 ml-2">({learnerPreview.class_stream})</span>
-                    </div>
-                  )}
-                  {!isSearching && admissionNo.length > 2 && !learnerPreview && (
-                    <div className="mt-2 p-2 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded text-sm text-red-700 dark:text-red-400">
-                      ❌ No active student found.
-                    </div>
-                  )}
+                  {learnerPreview && (<div className="mt-2 p-2 bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800 rounded text-sm"><span className="font-bold text-green-800 dark:text-green-400">✅ {learnerPreview.full_name}</span><span className="text-green-700 dark:text-green-300 ml-2">({learnerPreview.class_stream})</span></div>)}
+                  {!isSearching && admissionNo.length > 2 && !learnerPreview && (<div className="mt-2 p-2 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded text-sm text-red-700 dark:text-red-400">❌ No active student found.</div>)}
                 </div>
-
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Reason</label>
                   <select value={reason} onChange={(e) => setReason(e.target.value)} className="mt-1 w-full rounded border border-gray-300 dark:border-gray-600 px-3 py-2 text-gray-900 dark:text-white dark:bg-gray-700">
-                    <option value="headache">Headache</option>
-                    <option value="stomach">Stomach ache</option>
-                    <option value="injury">Injury</option>
-                    <option value="fever">Fever</option>
-                    <option value="other">Other</option>
+                    <option value="headache">Headache</option><option value="stomach">Stomach ache</option><option value="injury">Injury</option><option value="fever">Fever</option><option value="other">Other</option>
                   </select>
                 </div>
-                
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Note (optional)</label>
                   <input type="text" maxLength={140} value={note} onChange={(e) => setNote(e.target.value)} className="mt-1 w-full rounded border border-gray-300 dark:border-gray-600 px-3 py-2 text-gray-900 dark:text-white dark:bg-gray-700" placeholder="Brief context..." />
                 </div>
-
                 {error && <p className="text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/30 p-2 rounded">{error}</p>}
                 {successMsg && <p className="text-sm text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-900/30 p-2 rounded">{successMsg}</p>}
-                
                 <button type="submit" disabled={loading || !learnerPreview} className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 disabled:opacity-50 transition-colors">
                   {loading ? 'Sending...' : 'Send to San'}
                 </button>
@@ -236,7 +213,6 @@ function TeacherDashboard() {
             )}
           </div>
 
-          {/* Currently Open Board (With Class Filter) */}
           <div className="bg-white dark:bg-gray-800 p-6 rounded shadow transition-colors">
             <div className="flex justify-between items-start mb-4">
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Currently at San</h2>
@@ -262,7 +238,6 @@ function TeacherDashboard() {
                     </div>
                     <div className="text-xs text-gray-600 dark:text-gray-300">
                       <span className="font-medium">Reason:</span> <span className="capitalize">{p.reason_category}</span>
-                      {p.reason_note && <span className="italic"> - "{p.reason_note}"</span>}
                     </div>
                     <div className="text-xs text-gray-400 mt-1">Sent by {p.teacher?.full_name}</div>
                   </li>
@@ -272,7 +247,6 @@ function TeacherDashboard() {
           </div>
         </div>
 
-        {/* My Recent Passes */}
         <div className="bg-white dark:bg-gray-800 p-6 rounded shadow mt-6 transition-colors">
           <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">My Recent Passes (Today)</h2>
           {todayPasses.length === 0 ? (
@@ -282,10 +256,8 @@ function TeacherDashboard() {
               <table className="w-full text-left border-collapse text-sm">
                 <thead>
                   <tr className="bg-gray-50 dark:bg-gray-900 text-gray-600 dark:text-gray-300">
-                    <th className="p-2 border-b dark:border-gray-700">Learner</th>
-                    <th className="p-2 border-b dark:border-gray-700">Reason</th>
-                    <th className="p-2 border-b dark:border-gray-700">Status</th>
-                    <th className="p-2 border-b dark:border-gray-700">Sent At</th>
+                    <th className="p-2 border-b dark:border-gray-700">Learner</th><th className="p-2 border-b dark:border-gray-700">Reason</th>
+                    <th className="p-2 border-b dark:border-gray-700">Status</th><th className="p-2 border-b dark:border-gray-700">Sent At</th>
                   </tr>
                 </thead>
                 <tbody>
