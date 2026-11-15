@@ -4,6 +4,8 @@ import { useState, useEffect, Suspense } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import ThemeToggle from '@/components/ThemeToggle';
+import Modal from '@/components/Modal';
+import { useUser } from '@/hooks/useUser';
 
 type Pass = {
   id: string;
@@ -17,15 +19,12 @@ type Pass = {
   teacher: { full_name: string } | null;
 };
 
-type LearnerPreview = {
-  id: string;
-  full_name: string;
-  class_stream: string;
-};
+type LearnerPreview = { id: string; full_name: string; class_stream: string; };
 
 function TeacherDashboard() {
   const router = useRouter();
   const supabase = createClient();
+  const { staff, loading: userLoading } = useUser();
 
   const [isOnDuty, setIsOnDuty] = useState(false);
   const [loadingDuty, setLoadingDuty] = useState(true);
@@ -45,75 +44,55 @@ function TeacherDashboard() {
   const [todayPasses, setTodayPasses] = useState<Pass[]>([]);
   const [classFilter, setClassFilter] = useState('All');
 
+  const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
+
   useEffect(() => {
     async function checkDuty() {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-
-      const { data: staff } = await supabase.from('staff').select('id, role').eq('auth_user_id', user.id).single();
-      
-      if (staff?.role === 'admin' || staff?.role === 'nurse') {
+      if (!staff) return;
+      if (staff.role === 'admin' || staff.role === 'nurse') {
         setIsOnDuty(true); 
-      } else if (staff) {
+      } else {
         const { data: isDuty } = await supabase.rpc('is_on_duty', { p_staff_id: staff.id });
         setIsOnDuty(!!isDuty);
       }
       setLoadingDuty(false);
     }
     checkDuty();
-  }, []);
+  }, [staff]);
 
   useEffect(() => {
     if (!admissionNo.trim()) { setLearnerPreview(null); return; }
-
     const delayDebounceFn = setTimeout(async () => {
       setIsSearching(true);
       const { data } = await supabase.from('learners').select('id, full_name, class_stream').eq('admission_no', admissionNo.trim()).eq('is_active', true).single();
       if (data) { setLearnerPreview(data); setError(null); } else { setLearnerPreview(null); }
       setIsSearching(false);
     }, 500);
-
     return () => clearTimeout(delayDebounceFn);
   }, [admissionNo]);
 
   useEffect(() => {
     fetchPasses();
-
-    // Listen for ALL updates on passes
-    const channel = supabase
-      .channel('teacher-updates')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'passes' }, (payload) => {
-        
-        // If a pass was just returned, show a toast!
-        if (payload.eventType === 'UPDATE' && payload.new.status === 'returned' && payload.old.status !== 'returned') {
-          // Find the learner name from our local state
-          const returnedPass = todayPasses.find(p => p.id === payload.new.id);
-          if (returnedPass && returnedPass.learners) {
-            setToastMsg(`🔔 ${returnedPass.learners.full_name} has returned to class.`);
-            setTimeout(() => setToastMsg(null), 5000); // Hide after 5 seconds
-          }
+    const channel = supabase.channel('teacher-updates').on('postgres_changes', { event: '*', schema: 'public', table: 'passes' }, (payload) => {
+      if (payload.eventType === 'UPDATE' && payload.new.status === 'returned' && payload.old.status !== 'returned') {
+        const returnedPass = todayPasses.find(p => p.id === payload.new.id);
+        if (returnedPass && returnedPass.learners) {
+          setToastMsg(`🔔 ${returnedPass.learners.full_name} has returned to class.`);
+          setTimeout(() => setToastMsg(null), 5000);
         }
-        
-        fetchPasses();
-      })
-      .subscribe();
-
+      }
+      fetchPasses();
+    }).subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [todayPasses]); // Add todayPasses as dependency so it has the latest names
+  }, [todayPasses]);
 
   async function fetchPasses() {
-    const start = new Date();
-    start.setHours(0, 0, 0, 0);
-
-    const { data, error } = await supabase
-      .from('passes')
-      .select(`
+    const start = new Date(); start.setHours(0, 0, 0, 0);
+    const { data, error } = await supabase.from('passes').select(`
         id, learner_id, reason_category, reason_note, status, sent_at, expires_at,
         learners ( full_name, admission_no, class_stream ),
         teacher:teacher_id ( full_name )
-      `)
-      .gte('sent_at', start.toISOString())
-      .order('sent_at', { ascending: false });
+      `).gte('sent_at', start.toISOString()).order('sent_at', { ascending: false });
 
     if (!error && data) {
       setTodayPasses(data as unknown as Pass[]);
@@ -125,24 +104,16 @@ function TeacherDashboard() {
   async function handleSend(e: React.FormEvent) {
     e.preventDefault();
     if (!learnerPreview || !isOnDuty) return;
-    
     setLoading(true); setError(null); setSuccessMsg(null);
-
-    const { error: rpcError } = await supabase.rpc('create_pass', {
-      p_learner_id: learnerPreview.id,
-      p_reason_category: reason,
-      p_reason_note: note || null,
-    });
-
+    const { error: rpcError } = await supabase.rpc('create_pass', { p_learner_id: learnerPreview.id, p_reason_category: reason, p_reason_note: note || null });
     if (rpcError) { setError(rpcError.message); setLoading(false); return; }
-
     setSuccessMsg(`Pass created for ${learnerPreview.full_name}.`);
     setAdmissionNo(''); setNote(''); setLearnerPreview(null);
     fetchPasses(); 
     setLoading(false);
   }
 
-  async function handleLogout() {
+  async function confirmLogout() {
     await supabase.auth.signOut();
     window.location.href = '/login';
   }
@@ -150,12 +121,10 @@ function TeacherDashboard() {
   const uniqueClasses = ['All', ...Array.from(new Set(openPasses.map(p => p.learners?.class_stream).filter(Boolean)))];
   const filteredOpenPasses = classFilter === 'All' ? openPasses : openPasses.filter(p => p.learners?.class_stream === classFilter);
 
-  if (loadingDuty) return <div className="p-10 text-center text-gray-500">Checking duty roster...</div>;
+  if (userLoading || loadingDuty) return <div className="p-10 text-center text-gray-500 dark:text-gray-400">Loading dashboard...</div>;
 
   return (
     <main className="min-h-screen bg-gray-50 dark:bg-gray-900 p-4 sm:p-6 transition-colors relative">
-      
-      {/* Toast Notification */}
       {toastMsg && (
         <div className="fixed top-4 right-4 z-50 bg-green-600 text-white px-6 py-3 rounded-lg shadow-xl animate-bounce">
           {toastMsg}
@@ -164,19 +133,19 @@ function TeacherDashboard() {
 
       <div className="max-w-4xl mx-auto space-y-6">
         
+        {/* PROFESSIONAL HEADER */}
         <div className="flex justify-between items-center bg-white dark:bg-gray-800 p-4 rounded shadow transition-colors">
           <div>
-            <h1 className="text-xl font-bold text-gray-900 dark:text-white">Teacher Dashboard</h1>
-            <p className="text-sm text-gray-500 dark:text-gray-400">Kenya High School</p>
+            <h1 className="text-xl font-bold text-gray-900 dark:text-white">Welcome, {staff?.full_name}</h1>
+            <p className="text-sm text-gray-500 dark:text-gray-400 capitalize">{staff?.role} Dashboard — Kenya High School</p>
           </div>
           <div className="flex items-center gap-4">
             <ThemeToggle />
-            <button onClick={handleLogout} className="text-sm text-red-600 dark:text-red-400 hover:underline">Log out</button>
+            <button onClick={() => setIsLogoutModalOpen(true)} className="text-sm text-red-600 dark:text-red-400 hover:underline">Log out</button>
           </div>
         </div>
 
         <div className="grid md:grid-cols-2 gap-6">
-          
           <div className="bg-white dark:bg-gray-800 p-6 rounded shadow transition-colors">
             <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">New Pass</h2>
             
@@ -286,6 +255,8 @@ function TeacherDashboard() {
         </div>
 
       </div>
+
+      <Modal isOpen={isLogoutModalOpen} title="Log Out" message="Are you sure you want to log out of the Sanatorium system?" confirmText="Yes, Log Out" isDanger={true} onCancel={() => setIsLogoutModalOpen(false)} onConfirm={confirmLogout} />
     </main>
   );
 }
